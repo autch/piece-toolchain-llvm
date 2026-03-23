@@ -1,0 +1,11 @@
+build/
+sdk/
+sysroot/
+__pycache__/
+*.o
+*.elf
+*.srf
+*.sym
+*.map
+*.cm
+
