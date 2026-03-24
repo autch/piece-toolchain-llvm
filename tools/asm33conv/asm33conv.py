@@ -288,6 +288,14 @@ def main():
     with open(args.input, encoding='cp932', errors='replace') as f:
         lines = f.readlines()
 
+    import datetime
+    header = (
+        f"// This file was automatically converted by asm33conv.py\n"
+        f"// from: {args.input}\n"
+        f"// on:   {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"// Do not edit — re-run asm33conv to regenerate.\n"
+    )
+
     out_lines = []
     for lineno, line in enumerate(lines, 1):
         try:
@@ -297,7 +305,7 @@ def main():
             expanded = [line.rstrip()]
         out_lines.extend(expanded)
 
-    text = '\n'.join(out_lines)
+    text = header + '\n'.join(out_lines)
     if out_lines:
         text += '\n'
 
