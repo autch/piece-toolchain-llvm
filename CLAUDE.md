@@ -76,7 +76,7 @@ Follow the phasing in DESIGN_SPEC.md §8:
 5. **Phase 5** — SRF→ELF conversion tool + linker script → can link with P/ECE SDK libraries
 6. **Phase 6** — P/ECE SDK integration tests → full application build verified
 
-**Current status**: Phase 6 complete. mini_nocrt / minimal / hello all verified on real P/ECE hardware (2026-03).
+**Current status**: Phase 6 complete. mini_nocrt / minimal / hello / print / jien all verified on real P/ECE hardware (2026-03).
 
 Within each phase, write lit tests alongside the implementation. Every instruction encoding, every calling convention edge case, every relaxation pattern should have a test.
 
@@ -128,6 +128,9 @@ When unsure how to implement something, look at these existing backends in prior
 - **eliminateFrameIndex must remap opcodes for byte/halfword** — When a FrameIndex appears in LDUB_ri/LDB_ri/LDH_ri/LDUH_ri/STB_ri/STH_ri, the opcode must be changed to the SP-relative variant (LDUB_sp etc). LDW/STW were handled but byte/halfword were missing.
 - **double args: no split across register/stack** — If only 1 register remains when a double arg arrives, both halves go to stack. No splitting one half to register and one to stack. Implemented via CCCustom handler.
 - **Variadic function ABI is all-stack** — When calling a variadic function (printf, scanf, etc.), ALL arguments go on the stack. R12–R15 are NOT used. This is because the SDK's stdarg.h uses `&(lastparm)` to get the stack address, which requires all args to be in contiguous stack memory. Do NOT implement a "spill register args in callee prologue" pattern like ARM/MIPS — the caller handles everything.
+- **ret.d delay slot must not contain popn** — `ret.d` reads the return address from `[SP]` AFTER the delay slot executes. If `popn %rN` is in the delay slot (which restores SP), the return address is read from the wrong stack position. The delay slot filler excludes `popn` from `ret.d` slots.
+- **Struct-by-value args go entirely on stack (§6.5.4)** — For `callee(struct _foo foo, int d)`, only `d` uses R12; `foo` is passed entirely via stack. Structs do NOT consume register slots. This is implemented in `LowerCall` by excluding byval args from CC analysis and storing struct words directly to the outgoing stack area after CC-assigned stack args.
+- **MinGlobalAlign=32 matches gcc33** — All global variables are aligned to at least 4 bytes. Without this, `const unsigned char[]` arrays (bitmap data) can land at odd addresses, causing unaligned access traps when SDK library code does halfword/word access on them. Set via `MinGlobalAlign=32` in the Clang target and `-a:0:32` in the data layout string.
 
 ## SDK Library Link Order
 

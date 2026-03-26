@@ -43,6 +43,8 @@ The following applications have been verified on a real P/ECE device.
 | `mini_nocrt/` | crt0 手書き、手動リンク | 画面描画・ST+SL でメニュー復帰 |
 | `minimal/` | sysroot の crt0 + pceapi | 同上 |
 | `hello/` | EPSON SDK CRT 完全使用 | `printf` 表示・システムメニュー・メニュー復帰 |
+| `print/` | EPSON SDK CRT 完全使用 | `pceFontPutStr` 複数呼び出し・`pcesprintf` フォーマット |
+| `jien/` | EPSON SDK CRT + 描画ライブラリ | ビットマップ表示・構造体値渡し（`pceLCDDrawObject`） |
 
 ---
 
@@ -65,6 +67,8 @@ llvm-c33/
 │   ├── asm33conv/          EPSON as33 アセンブリ → LLVM IR コンバータ
 │   └── piece.ld            P/ECE アプリ用リンカースクリプト
 ├── hello/                  サンプルアプリ（EPSON SDK CRT 使用）
+├── print/                  サンプルアプリ（SDK 文字列描画）
+├── jien/                   サンプルアプリ（ビットマップ描画・構造体値渡し）
 ├── minimal/                サンプルアプリ（sysroot crt0 使用）
 ├── mini_nocrt/             サンプルアプリ（crt0 手書き・最小構成）
 ├── docs/
@@ -182,7 +186,7 @@ void pceAppExit(void)    { /* called at termination  */ }
 ## 主な実装済み機能 / Implemented Features
 
 - **命令セット全般** — 16-bit 固定長命令、`ext` 即値拡張（最大2段）、遅延分岐スロット
-- **ABI (S5U1C33000C)** — R12–R15 引数、R10 返り値、R0–R3 callee-saved、可変引数は全スタック渡し
+- **ABI (S5U1C33000C)** — R12–R15 引数、R10 返り値、R0–R3 callee-saved、可変引数は全スタック渡し、構造体は全スタック渡し
 - **MC レイヤー** — ELF オブジェクト出力、ext+call/jp の3命令→1命令リラクゼーション
 - **逆アセンブラ** — `ext` 拡張後の実効値をコメント表示（例: `; # 0x2c00`）
 - **遅延スロットフィラー** — 安全な命令でスロットを充填、不可の場合は `nop`
@@ -190,6 +194,7 @@ void pceAppExit(void)    { /* called at termination  */ }
 - **crt0** — `pceAPPHEAD` 構造体配置・BSS ゼロクリア・バージョンチェック・コールバックラッパー
 - **libpceapi** — カーネル API スタブ自動生成（`gen_pceapi.py` + `vector.h`）
 - **SRF33 変換** — EPSON 独自形式 SDK ライブラリを ELF/GNU ar 形式へ変換
+- **構造体値渡し (byval)** — §6.5.4 準拠、全メンバをスタック経由で渡す（レジスタ不使用）
 
 ---
 
