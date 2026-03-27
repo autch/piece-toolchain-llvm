@@ -70,24 +70,28 @@ def xld_to_ld(xmnem):
 
 def _ext_lines(offset):
     """
-    オフセット値を ext 命令列に変換する（最小限の ext 数）:
-      offset == 0         → [] (ext 不要)
-      -8192 <= offset <= 8191  → [ext offset & 0x1FFF]  (1 ext)
-      それ以外             → [ext hi, ext lo]           (2 ext)
+    レジスタ間接 [%rb] 用のオフセットを ext 命令列に変換する（最小限の ext 数）。
 
-    1 ext の場合: CPU は (sign_extend_19(imm13 << 6) | sign6 of base insn) として
-    実効値を計算する。base insn の sign6 は 0 なので実効値 = sign_extend_19(imm13 << 6)。
-    これが offset に等しくなるには offset が 64 の倍数（bits[5:0]==0）である必要がある。
-    一般オフセットは 2 ext が必要なため、sign13 (-4096..4095) かつ 64 の倍数の場合のみ
-    1 ext を使う。それ以外は 2 ext（悲観的展開、MCリラクゼーションは ext を縮小しない）。
+    [%rb] 系命令に対する ext の変位計算:
+      1 ext: displacement = sign_extend_13(imm13)  ← imm13 を直接変位として使う
+      2 ext: displacement = (ext1_imm13 << 13) | ext2_imm13  (26 bit)
+
+    ld.w/ld.b 等の即値命令とは式が異なる（即値命令は sign_extend_19((imm13<<6)|sign6)）。
+    S1C33ExpandExtPseudos.cpp: ext_imm13 = Off & 0x1FFF で 1 ext を生成していることから確認済み。
+
+    offset == 0     → [] (ext 不要)
+    -4096..4095     → [ext offset]  (1 ext, sign13 直接)
+    それ以外        → [ext hi, ext lo]  (2 ext, 26 bit 分割)
+
+    注意: 「6 bit には収まるが sign6 解釈では負になる値」(32..4095 など) は
+    そのまま imm13 として渡せばよく、sign_extend_13 が正しい変位を返す。
     """
     if offset == 0:
         return []
-    # 1 ext が正確に表現できる条件: offset は符号付き 19 ビット範囲かつ bits[5:0]==0
-    # sign_extend_19(imm13 << 6) == offset  →  imm13 == offset >> 6, bits[5:0] == 0
-    if (offset & 0x3F) == 0 and -(1 << 18) <= offset < (1 << 18):
-        imm13 = (offset >> 6) & 0x1FFF
-        return [f"\text\t{imm13}"]
+    # 1 ext: sign_extend_13(imm13) = offset  →  imm13 = offset, -4096 <= offset <= 4095
+    if -(1 << 12) <= offset < (1 << 12):
+        return [f"\text\t{offset & 0x1FFF}"]
+    # 2 ext: (ext1 << 13) | ext2 = offset
     ext_hi = (offset >> 13) & 0x1FFF
     ext_lo = offset & 0x1FFF
     return [f"\text\t{ext_hi}", f"\text\t{ext_lo}"]
