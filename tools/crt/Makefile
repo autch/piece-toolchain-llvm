@@ -45,6 +45,7 @@ INCLUDE := -I$(SYSROOT)/include
 CFLAGS_CRT := --target=$(TARGET) -c -ffreestanding \
               $(INCLUDE) \
 			  -O1 \
+			  -fno-inline \
               -Wall \
               -Wno-incompatible-library-redeclaration \
               -Wno-int-conversion

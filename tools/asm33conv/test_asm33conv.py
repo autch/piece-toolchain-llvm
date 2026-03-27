@@ -42,56 +42,57 @@ class TestSign6(unittest.TestCase):
 
 
 class TestXldLoad(unittest.TestCase):
+    # Pessimistic 2-ext expansion; MC relaxation removes unnecessary ext later.
     def test_no_offset(self):
         result = translate_line('\txld.w\t%r7,[%r12]\n')
-        self.assertEqual(result, ['\text\t0', '\tld.w\t%r7, [%r12]'])
+        self.assertEqual(result, ['\text\t0', '\text\t0', '\tld.w\t%r7, [%r12]'])
 
     def test_with_offset(self):
         result = translate_line('\txld.w\t%r5,[%r12+4]\n')
-        self.assertEqual(result, ['\text\t4', '\tld.w\t%r5, [%r12]'])
+        self.assertEqual(result, ['\text\t0', '\text\t4', '\tld.w\t%r5, [%r12]'])
 
     def test_byte_load(self):
         result = translate_line('\txld.b\t%r4,[%r10]\n')
-        self.assertEqual(result, ['\text\t0', '\tld.b\t%r4, [%r10]'])
+        self.assertEqual(result, ['\text\t0', '\text\t0', '\tld.b\t%r4, [%r10]'])
 
     def test_byte_load_offset(self):
         result = translate_line('\txld.b\t%r11,[%r10+1]\n')
-        self.assertEqual(result, ['\text\t1', '\tld.b\t%r11, [%r10]'])
+        self.assertEqual(result, ['\text\t0', '\text\t1', '\tld.b\t%r11, [%r10]'])
 
     def test_uh_load(self):
         result = translate_line('\txld.uh\t%r10,[%r13]\n')
-        self.assertEqual(result, ['\text\t0', '\tld.uh\t%r10, [%r13]'])
+        self.assertEqual(result, ['\text\t0', '\text\t0', '\tld.uh\t%r10, [%r13]'])
 
     def test_uh_load_offset(self):
         result = translate_line('\txld.uh\t%r6,[%r12+8]\n')
-        self.assertEqual(result, ['\text\t8', '\tld.uh\t%r6, [%r12]'])
+        self.assertEqual(result, ['\text\t0', '\text\t8', '\tld.uh\t%r6, [%r12]'])
 
     def test_with_comment(self):
         result = translate_line('\txld.w\t%r7,[%r12]\t; tbl\n')
-        self.assertEqual(result, ['\text\t0', '\tld.w\t%r7, [%r12]\t; tbl'])
+        self.assertEqual(result, ['\text\t0', '\text\t0', '\tld.w\t%r7, [%r12]\t; tbl'])
 
     def test_large_offset(self):
-        # offset > 63 requires ext
         result = translate_line('\txld.w\t%r0,[%r1+64]\n')
-        self.assertEqual(result, ['\text\t64', '\tld.w\t%r0, [%r1]'])
+        self.assertEqual(result, ['\text\t0', '\text\t64', '\tld.w\t%r0, [%r1]'])
 
     def test_hex_offset(self):
         result = translate_line('\txld.w\t%r0,[%r1+0x10]\n')
-        self.assertEqual(result, ['\text\t16', '\tld.w\t%r0, [%r1]'])
+        self.assertEqual(result, ['\text\t0', '\text\t16', '\tld.w\t%r0, [%r1]'])
 
 
 class TestXldStore(unittest.TestCase):
+    # Pessimistic 2-ext expansion; MC relaxation removes unnecessary ext later.
     def test_no_offset(self):
         result = translate_line('\txld.w\t[%r12],%r5\n')
-        self.assertEqual(result, ['\text\t0', '\tld.w\t[%r12], %r5'])
+        self.assertEqual(result, ['\text\t0', '\text\t0', '\tld.w\t[%r12], %r5'])
 
     def test_with_offset(self):
         result = translate_line('\txld.w\t[%r12+4],%r5\n')
-        self.assertEqual(result, ['\text\t4', '\tld.w\t[%r12], %r5'])
+        self.assertEqual(result, ['\text\t0', '\text\t4', '\tld.w\t[%r12], %r5'])
 
     def test_with_comment(self):
         result = translate_line('\txld.w\t[%r12+4],%r5\t; freqwk\n')
-        self.assertEqual(result, ['\text\t4', '\tld.w\t[%r12], %r5\t; freqwk'])
+        self.assertEqual(result, ['\text\t0', '\text\t4', '\tld.w\t[%r12], %r5\t; freqwk'])
 
 
 class TestXldImm(unittest.TestCase):
@@ -143,31 +144,34 @@ class TestXldImm(unittest.TestCase):
 
 class TestXshift(unittest.TestCase):
     def test_xsrl(self):
+        # 14 = 8 + 6 — split into two shifts (ext doesn't work with shifts)
         result = translate_line('\txsrl\t%r10, 14\n')
-        self.assertEqual(result, ['\text\t0', '\tsrl\t%r10, 14'])
+        self.assertEqual(result, ['\tsrl\t%r10, 8', '\tsrl\t%r10, 6'])
 
     def test_xsra(self):
         result = translate_line('\txsra\t%r11, 14\n')
-        self.assertEqual(result, ['\text\t0', '\tsra\t%r11, 14'])
+        self.assertEqual(result, ['\tsra\t%r11, 8', '\tsra\t%r11, 6'])
 
     def test_xsla_becomes_sll(self):
-        # xsla → sll (LLVM uses sll for logical left shift)
+        # xsla → sll (sla = sll for left shift)
         result = translate_line('\txsla\t%r5, 14\n')
-        self.assertEqual(result, ['\text\t0', '\tsll\t%r5, 14'])
+        self.assertEqual(result, ['\tsll\t%r5, 8', '\tsll\t%r5, 6'])
 
     def test_with_comment(self):
+        # 8 fits in one instruction; comment on the (only) line
         result = translate_line('\txsra\t%r4, 8\t; d1>>=8\n')
-        self.assertEqual(result, ['\text\t0', '\tsra\t%r4, 8\t; d1>>=8'])
+        self.assertEqual(result, ['\tsra\t%r4, 8\t; d1>>=8'])
 
     def test_xsra_16(self):
-        # 16 = (1 << 4) | 0 → ext 1; sra %r11, 0
+        # 16 = 8 + 8
         result = translate_line('\txsra\t%r11, 16\n')
-        self.assertEqual(result, ['\text\t1', '\tsra\t%r11, 0'])
+        self.assertEqual(result, ['\tsra\t%r11, 8', '\tsra\t%r11, 8'])
 
     def test_xsrl_31(self):
-        # 31 = (1 << 4) | 15 → ext 1; srl %r10, 15
+        # 31 = 8 + 8 + 8 + 7
         result = translate_line('\txsrl\t%r10, 31\n')
-        self.assertEqual(result, ['\text\t1', '\tsrl\t%r10, 15'])
+        self.assertEqual(result, ['\tsrl\t%r10, 8', '\tsrl\t%r10, 8',
+                                  '\tsrl\t%r10, 8', '\tsrl\t%r10, 7'])
 
 
 class TestPassthrough(unittest.TestCase):
