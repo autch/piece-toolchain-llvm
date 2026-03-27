@@ -68,56 +68,77 @@ def xld_to_ld(xmnem):
 # 展開関数
 # ---------------------------------------------------------------------------
 
-def expand_xld_load(mnem, rd, rb, offset, comment):
+def _ext_lines(offset):
     """
-    xld.X %rd, [%rb+N]  → ext (N>>13)&0x1FFF
-                           ext  N    &0x1FFF
-                           ld.X %rd, [%rb]
-    オフセットは ext 2段に畳み込み、ベース命令は [%rb]（オフセットなし）にする。
-    LLVM AsmParser は [%rb+N] 構文を受け付けないため、常にこの形式で出力する。
-    オフセットが sign6 範囲内でも悲観的に 2-ext を出力する。
-    MC リラクゼーションで不要な ext は除去される。
+    オフセット値を ext 命令列に変換する（最小限の ext 数）:
+      offset == 0         → [] (ext 不要)
+      -8192 <= offset <= 8191  → [ext offset & 0x1FFF]  (1 ext)
+      それ以外             → [ext hi, ext lo]           (2 ext)
+
+    1 ext の場合: CPU は (sign_extend_19(imm13 << 6) | sign6 of base insn) として
+    実効値を計算する。base insn の sign6 は 0 なので実効値 = sign_extend_19(imm13 << 6)。
+    これが offset に等しくなるには offset が 64 の倍数（bits[5:0]==0）である必要がある。
+    一般オフセットは 2 ext が必要なため、sign13 (-4096..4095) かつ 64 の倍数の場合のみ
+    1 ext を使う。それ以外は 2 ext（悲観的展開、MCリラクゼーションは ext を縮小しない）。
     """
+    if offset == 0:
+        return []
+    # 1 ext が正確に表現できる条件: offset は符号付き 19 ビット範囲かつ bits[5:0]==0
+    # sign_extend_19(imm13 << 6) == offset  →  imm13 == offset >> 6, bits[5:0] == 0
+    if (offset & 0x3F) == 0 and -(1 << 18) <= offset < (1 << 18):
+        imm13 = (offset >> 6) & 0x1FFF
+        return [f"\text\t{imm13}"]
     ext_hi = (offset >> 13) & 0x1FFF
     ext_lo = offset & 0x1FFF
-    return [
-        f"\text\t{ext_hi}",
-        f"\text\t{ext_lo}",
-        f"\t{mnem}\t{rd}, [{rb}]{comment}",
-    ]
+    return [f"\text\t{ext_hi}", f"\text\t{ext_lo}"]
+
+
+def expand_xld_load(mnem, rd, rb, offset, comment):
+    """
+    xld.X %rd, [%rb+N]  → (最小限の ext) + ld.X %rd, [%rb]
+    オフセットは ext に畳み込み、ベース命令は [%rb]（オフセットなし）にする。
+    LLVM AsmParser は [%rb+N] 構文を受け付けないためこの形式で出力する。
+    offset==0 の場合は ext を省略する（MCリラクゼーションは bare ext を除去しない）。
+    """
+    lines = _ext_lines(offset)
+    lines.append(f"\t{mnem}\t{rd}, [{rb}]{comment}")
+    return lines
 
 
 def expand_xld_store(mnem, rb, offset, rs, comment):
     """
-    xld.X [%rb+N], %rs  → ext (N>>13)&0x1FFF
-                           ext  N    &0x1FFF
-                           ld.X [%rb], %rs
+    xld.X [%rb+N], %rs  → (最小限の ext) + ld.X [%rb], %rs
     """
-    ext_hi = (offset >> 13) & 0x1FFF
-    ext_lo = offset & 0x1FFF
-    return [
-        f"\text\t{ext_hi}",
-        f"\text\t{ext_lo}",
-        f"\t{mnem}\t[{rb}], {rs}{comment}",
-    ]
+    lines = _ext_lines(offset)
+    lines.append(f"\t{mnem}\t[{rb}], {rs}{comment}")
+    return lines
 
 
 def expand_xld_imm(rd, value, comment):
     """
-    xld.w %rd, imm32 の悲観的展開:
-      ext  (value >> 19) & 0x1FFF   ; ビット 31:19
-      ext  (value >> 6)  & 0x1FFF   ; ビット 18:6
-      ld.w %rd, sign6(value)         ; ビット 5:0（符号付き6ビット）
+    xld.w %rd, imm32 の最適展開:
+      sign6 範囲 (-32..31):  ld.w %rd, value         (0 ext)
+      sign19 範囲:            ext imm13; ld.w %rd, base  (1 ext)
+      それ以外:               ext hi; ext mid; ld.w %rd, base  (2 ext)
 
-    例: xld.w %r9, 0x3fff
-      ext  0
-      ext  255     (= 0x3fff >> 6 = 0xff)
-      ld.w %r9, -1 (= sign6(0x3f) = -1)
-      → 実効値 = (0 << 19) | (255 << 6) | 0x3f = 0x3fff
+    1 ext の実効値: sign_extend_19((imm13 << 6) | (base & 0x3F)) = value
+      imm13 = (value >> 6) & 0x1FFF, base = sign6(value)
+    2 ext の実効値: (ext_hi << 19) | (ext_mid << 6) | (base & 0x3F) = value
     """
+    base = sign6(value)
+    # sign6 範囲内は ext 不要
+    if -32 <= value <= 31:
+        return [f"\tld.w\t{rd}, {value}{comment}"]
+    # 1 ext で表現できるか: -(2^18) <= value < 2^18
+    if -(1 << 18) <= value < (1 << 18):
+        imm13 = (value >> 6) & 0x1FFF
+        return [
+            f"\text\t{imm13}",
+            f"\tld.w\t{rd}, {base}{comment}",
+        ]
+    # 2 ext（悲観的展開）
     ext_hi  = (value >> 19) & 0x1FFF
     ext_mid = (value >> 6)  & 0x1FFF
-    base    = sign6(value)
     return [
         f"\text\t{ext_hi}",
         f"\text\t{ext_mid}",
