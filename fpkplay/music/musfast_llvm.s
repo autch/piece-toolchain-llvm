@@ -1,13 +1,12 @@
 // This file was automatically converted by asm33conv.py
 // from: musfast.s
-// on:   2026-03-28 05:16:35
+// on:   2026-03-28 05:41:39
 // Do not edit — re-run asm33conv to regenerate.
 ; ----------------------------------------------------------
 	.global	MakeWaveLP_fast
 
 MakeWaveLP_fast:
 	ld.w	%r7, [%r12]	; tbl = mp->pData
-	ext	0
 	ext	4
 	ld.w	%r5, [%r12]	; cc = mp->freqwk
 
@@ -25,16 +24,13 @@ __LX16:
 
 	add	%r10,%r7
 	ld.b	%r4, [%r10]	; d1 = tbl[o];
-	ext	0
 	ext	1
 	ld.b	%r11, [%r10]	; d2 = tbl[o+1];
 
-	ext	0
 	ext	8
 	ld.w	%r10, [%r12]	; cc += mp->freq
 	add	%r5,%r10
 
-	ext	0
 	ext	12
 	ld.w	%r10, [%r12]	; >= mp->loop_end
 	cmp	%r5,%r10
@@ -42,7 +38,6 @@ __LX16:
 
 	sub	%r11,%r4	; d2 -= d1 (ディレイド対応!!)
 
-	ext	0
 	ext	16
 	ld.w	%r10, [%r12]	; cc -= mp->loop_w
 	sub	%r5,%r10
@@ -67,7 +62,6 @@ __LX19:
 	sub	%r15,0x1	; while ( --cnt )
 	jrne	__LX16
 
-	ext	0
 	ext	4
 	ld.w	[%r12], %r5	; mp->freqwk = cc
 
@@ -79,7 +73,6 @@ __LX19:
 
 MakeWaveNL_fast:
 	ld.w	%r7, [%r12]	; tbl = mp->pData
-	ext	0
 	ext	4
 	ld.w	%r5, [%r12]	; cc = mp->freqwk
 
@@ -97,16 +90,13 @@ __LX216:
 
 	add	%r10,%r7
 	ld.b	%r4, [%r10]	; d1 = tbl[o];
-	ext	0
 	ext	1
 	ld.b	%r11, [%r10]	; d2 = tbl[o+1];
 
-	ext	0
 	ext	8
 	ld.w	%r10, [%r12]	; cc += mp->freq
 	add	%r5,%r10
 
-	ext	0
 	ext	12
 	ld.w	%r10, [%r12]	; >= mp->loop_end
 	cmp	%r5,%r10
@@ -115,7 +105,6 @@ __LX216:
 	sub	%r11,%r4	; d2 -= d1 (ディレイド対応!!)
 
 	ld.w	%r5, 0
-	ext	0
 	ext	8
 	ld.w	[%r12], %r5	; mp->freqwk = 0
 	ret
@@ -141,7 +130,6 @@ __LX219:
 	sub	%r15,0x1	; while ( --cnt )
 	jrne	__LX216
 
-	ext	0
 	ext	4
 	ld.w	[%r12], %r5	; mp->freqwk = cc
 
@@ -153,10 +141,8 @@ __LX219:
 
 MakeWaveSQR_fast:
 
-	ext	0
 	ext	4
 	ld.w	%r4, [%r12]	; cc = mp->freqwk
-	ext	0
 	ext	8
 	ld.uh	%r6, [%r12]	; ff = mp->freq
 
@@ -179,7 +165,6 @@ __LX22:
 	sub	%r15,1
 	jrne	__LX18
 
-	ext	0
 	ext	4
 	ld.w	[%r12], %r4	; mp->freqwk = cc
 
@@ -190,10 +175,8 @@ __LX22:
 
 MakeWaveSAW_fast:
 
-	ext	0
 	ext	4
 	ld.w	%r4, [%r12]	; cc = mp->freqwk
-	ext	0
 	ext	8
 	ld.uh	%r6, [%r12]	; ff = mp->freq
 
@@ -216,7 +199,6 @@ __LX24:
 	sub	%r15,1
 	jrne	__LX24
 
-	ext	0
 	ext	4
 	ld.w	[%r12], %r4	; mp->freqwk = cc
 
@@ -226,10 +208,8 @@ __LX24:
 	.global	MakeWaveTRI_fast
 
 MakeWaveTRI_fast:
-	ext	0
 	ext	4
 	ld.uh	%r4, [%r12]	; cc = mp->freqwk
-	ext	0
 	ext	8
 	ld.uh	%r6, [%r12]
 
@@ -262,7 +242,6 @@ __LX28:
 	sub	%r15,1
 	jrne	__LX25
 
-	ext	0
 	ext	4
 	ld.w	[%r12], %r4	; mp->freqwk = cc
 
