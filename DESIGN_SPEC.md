@@ -711,6 +711,7 @@ R_S1C33_REL21（ext+call/jp の21ビット版）も同じ基準。
 - MAC/乗算命令のサポート（SubtargetFeature）
 - シフト量>8の複数命令分割（ISelDAGToDAG）
 - AND/OR/XOR/SUB の大即値対応（`_ri32` 疑似命令 + `expandPostRAPseudo` 展開）
+- ext+ALU 3-operand形式（`ext imm / op %rd, %rs` → `rd = rs <op> imm`）のISel+展開（`*_rri` 疑似命令 + `ExpandExtPseudos`）
 - デクリメントイディオム（`add %r, -1` → `sub %r, 1`）パターン追加
 - 分岐最適化（`analyzeBranch` / `insertBranch` / `removeBranch` / `reverseBranchCondition` 実装）
 - ユーザアプリ向け GP 最適化は実装しない（R8 = カーネルテーブルベース 0x0 として Reserved のみで対応）
@@ -741,6 +742,8 @@ R_S1C33_REL21（ext+call/jp の21ビット版）も同じ基準。
   - hello/hello_l.pex: EPSON SDK CRT 関数（printf等）・システムメニュー呼び出し・メニュー復帰すべて正常
   - print/print.pex: pceFontPutStr 複数回呼び出し・pcesprintf 文字列フォーマット正常動作を確認
   - jien/jien.pex: ビットマップ表示（pceLCDSetObject + pceLCDDrawObject）、byval 構造体値渡し、SDK 描画ライブラリ統合を確認（2026-03）
+  - fpkplay/fpkplay.pex: FPK音楽再生（LZSS展開 + muslib波形合成 + 8kHz/16kHz対応）を確認（2026-03）
+  - pmdplay/pmdplay.pex: PMD音楽再生（複数楽曲切替 + muslib波形合成）を確認（2026-03）
 - crt0.o + libpceapi.a による hello/ 動作確認: **完了**（2026-03）
 
 ---

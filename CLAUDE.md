@@ -77,7 +77,7 @@ Follow the phasing in DESIGN_SPEC.md §8:
 5. **Phase 5** — SRF→ELF conversion tool + linker script → can link with P/ECE SDK libraries
 6. **Phase 6** — P/ECE SDK integration tests → full application build verified
 
-**Current status**: Phase 6 complete. mini_nocrt / minimal / hello / print / jien all verified on real P/ECE hardware (2026-03).
+**Current status**: Phase 6 complete. mini_nocrt / minimal / hello / print / jien / fpkplay / pmdplay all verified on real P/ECE hardware (2026-03).
 
 Within each phase, write lit tests alongside the implementation. Every instruction encoding, every calling convention edge case, every relaxation pattern should have a test.
 
