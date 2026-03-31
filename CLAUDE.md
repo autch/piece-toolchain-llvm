@@ -160,6 +160,8 @@ This means the backend must **never** fold a negative constant offset into an ex
 
 This is distinct from the 2-operand immediate form `op %rd, sign6/imm6` where `%rd = %rd <op> imm6`.
 
+**Not yet implemented in the backend.** Currently all ALU immediate operations use Class 3 two-operand forms (`*_ri` / `*_ri32`). Implementing ext + Class 1 ALU as a 3-operand pattern could improve codegen for address calculations (e.g., `%rd = %rs + imm` in one ext+instruction pair instead of a mov+add sequence).
+
 ### Backend implementation
 
 - **InstrInfo.td**: Memory offset pseudos (`*_ri_off`) use `immZExt13` (not `immSExt13`), range [0, 8191]
