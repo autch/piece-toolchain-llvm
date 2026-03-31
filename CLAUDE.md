@@ -13,6 +13,7 @@ Read `DESIGN_SPEC.md` first — it contains all architecture details, design dec
 - 16-bit fixed-length instructions, 32-bit registers × 16 (R0–R15)
 - 28-bit address space (256MB), little-endian
 - `ext` prefix instruction extends immediates (max 2 × ext before any instruction)
+- **ext does NOT change the signedness of the target instruction's immediate** — signed instructions get sign-extension, unsigned instructions get zero-extension (see "ext Immediate Signedness Rules" section below)
 - Hardware guarantees atomicity of ext+target instruction sequences (trap-masked)
 - Delayed branch with strict slot constraints (1-cycle, no memory, no ext, no branch)
 - No hardware divider; step-division sequence (div0s/div1/div2s/div3s)
@@ -107,6 +108,64 @@ When unsure how to implement something, look at these existing backends in prior
 - Use TableGen for anything TableGen can express (instructions, registers, calling conventions)
 - Comment non-obvious encoding decisions with reference to the CPU manual section
 
+## ext Immediate Signedness Rules — CRITICAL
+
+**ext does NOT change the signedness of the target instruction's immediate.** If the target instruction takes a signed immediate (sign6/sign8), ext+instruction produces a sign-extended combined value. If the target instruction takes an unsigned immediate (imm6), ext+instruction produces a zero-extended combined value. Getting this wrong causes silent data corruption that is extremely difficult to debug.
+
+### Signed immediate instructions (sign6 / sign8)
+
+These instructions treat their immediate field as **signed**. With ext, the combined value is **sign-extended**:
+
+| Instruction | Immediate | With 1 ext | With 2 ext |
+|---|---|---|---|
+| `ld.w %rd, sign6` | sign_ext_6 → 32bit | sign_ext_19(ext13:sign6) | sign_ext_32(ext13:ext13:sign6) |
+| `and %rd, sign6` | sign_ext_6 | sign_ext_19 | sign_ext_32 |
+| `or %rd, sign6` | sign_ext_6 | sign_ext_19 | sign_ext_32 |
+| `xor %rd, sign6` | sign_ext_6 | sign_ext_19 | sign_ext_32 |
+| `not %rd, sign6` | sign_ext_6 | sign_ext_19 | sign_ext_32 |
+| `cmp %rd, sign6` | sign_ext_6 | sign_ext_19 | sign_ext_32 |
+| `jr** sign8` (all cond. branches, incl. `.d`) | sign_ext_8 | sign_ext_21 | sign_ext_32 |
+| `call sign8` (incl. `call.d`) | sign_ext_8 | sign_ext_21 | sign_ext_32 |
+| `jp sign8` (incl. `jp.d`) | sign_ext_8 | sign_ext_21 | sign_ext_32 |
+
+### Unsigned immediate instructions (imm6 / imm10)
+
+**Everything else** uses unsigned immediates. With ext, the combined value is **zero-extended**:
+
+| Instruction | Immediate | With 1 ext | With 2 ext |
+|---|---|---|---|
+| `add %rd, imm6` | zero_ext_6 → 32bit | zero_ext_19(ext13:imm6) | zero_ext_32(ext13:ext13:imm6) |
+| `sub %rd, imm6` | zero_ext_6 | zero_ext_19 | zero_ext_32 |
+| `ld.* %rd, [%sp+imm6]` | zero_ext_6 (scaled) | zero_ext_19 | zero_ext_32 |
+| `ld.* [%sp+imm6], %rs` | zero_ext_6 (scaled) | zero_ext_19 | zero_ext_32 |
+| `add %sp, imm10` | zero_ext_10 | — | — |
+| `sub %sp, imm10` | zero_ext_10 | — | — |
+
+### ext with register-indirect memory (Class 1): UNSIGNED displacement
+
+`ld.* %rd, [%rb]` and `ld.* [%rb], %rs` have **no** immediate field in the base encoding. When ext is prepended, the ext13 value provides a byte displacement that is **unsigned** (zero-extended):
+
+- `ext imm13 / ld.w %rd, [%rb]` → EA = rb + zero_ext(imm13)
+- Range: **[0, 8191]** bytes. **Negative offsets are NOT possible.**
+
+This means the backend must **never** fold a negative constant offset into an ext+load/store pattern. If the optimizer computes `base - N`, it must use a separate `sub` instruction, not a negative ext displacement. Violating this causes the CPU to access `base + (8192 - N)` instead of `base - N`, producing silent wrong data reads.
+
+**gcc33 never uses negative ext offsets for memory access.** It always recomputes addresses from scratch using positive offsets. This is correct behavior, not a missed optimization.
+
+### ext with register-register ALU (Class 1): 3-operand, UNSIGNED
+
+`ext imm13 / op %rd, %rs` converts the 2-operand register-register form into a **3-operand** operation:
+- `%rd = %rs <op> zero_ext(imm13)` (the ext value replaces the ALU operand, NOT %rs)
+- The immediate from ext is **unsigned**
+
+This is distinct from the 2-operand immediate form `op %rd, sign6/imm6` where `%rd = %rd <op> imm6`.
+
+### Backend implementation
+
+- **InstrInfo.td**: Memory offset pseudos (`*_ri_off`) use `immZExt13` (not `immSExt13`), range [0, 8191]
+- **ExpandExtPseudos.cpp**: `emitExtForImm()` takes `SignedImm6` parameter — true for sign6 instructions (and/or/xor/not/cmp/ld.w-imm), false for imm6 instructions (add/sub)
+- **eliminateFrameIndex**: SP-relative offsets are always non-negative (assert enforced)
+
 ## Common Pitfalls
 
 - **Two ABIs exist** — S5U1C33000C vs S5U1C33001C. We use S5U1C33000C. If you see R6–R9 as args or R4/R5 as return, you're looking at the wrong ABI.
@@ -121,6 +180,8 @@ When unsure how to implement something, look at these existing backends in prior
 - **Division is expensive** — 35 instructions for a single div. Default to library call (`__divsi3`), not inline expansion, to avoid code size explosion.
 - **EPSON's C library (lib.lib) has known bugs** — sin(), strtok(), pow(), strtod(), ispunct() are broken. Replace only the buggy functions individually; do not remove lib.lib entirely as other SDK components may depend on it.
 - **Shift/rotate instructions do NOT support ext** — Manual states "シフト・ローテート命令を除き、ext命令による即値拡張が行えます". Max shift amount is 8 bits (imm4 mapping: 0000=0, ..., 0111=7, 1xxx=8). Shift > 8 must be split into multiple instructions in ISelDAGToDAG using MachineNodes (NOT PerformDAGCombine, which gets re-combined).
+- **Class 1 memory ext displacement is UNSIGNED — negative offsets silently break** — `ext imm13 / ld.* [%rb]` zero-extends imm13. If the optimizer folds a negative offset (e.g., -2 → ext 8190), the CPU reads address `rb + 8190` instead of `rb - 2`. This caused pmdplay O1 bugs (parts not playing, loops stopping). The fix: use `immZExt13` (not `immSExt13`) in DAG patterns so negative offsets are never folded. See "ext Immediate Signedness Rules" section above.
+- **SP-relative offsets are in scaled units, not bytes** — `ld.w [%sp+imm6]`: imm6 is in word units (×4). `ld.h`: halfword units (×2). `ld.b`: byte units (×1). `add/sub %sp, imm10`: word units (×4). The byte offset from eliminateFrameIndex must be divided by the scale factor before encoding. gcc33 encodes `ld.w [%sp+0xd]` for byte offset 52 (13 words × 4).
 - **PC-relative relocations use branch instruction address as base** — For ext+ext+call patterns, REL_H/REL_M/REL_L all use the call instruction's address (not the ext instruction's address) as PC reference. Same for REL21.
 - **Conditional branch PC = instruction's own address, NOT next instruction** — S1C33 manual: `target = instr_addr + 2 × sign8`. `applyFixup` for `fixup_s1c33_pc_rel_8` uses `Offset = Value` (not `Value - 2`). The `Value - 2` form is only correct for `fixup_s1c33_pc_rel_21` where the fixup sits on the ext instruction 2 bytes before the branch. Getting this wrong causes back-edges to land 2 bytes off, potentially inside ext+ld pairs, causing loop-invariant hoisted loads to read 0.
 - **crt0 must be compiled with -O1** — At `-O0`, the BSS-clearing loop counter lives at `[SP+0]`. If the kernel places SP at `bss_end`, the loop overwrites its own stack variable while clearing BSS, causing silent corruption. `tools/crt/Makefile` already sets `-O1` in `CFLAGS_CRT` — do not override it.
