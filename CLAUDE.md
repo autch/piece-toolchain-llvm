@@ -157,10 +157,11 @@ This means the backend must **never** fold a negative constant offset into an ex
 `ext imm13 / op %rd, %rs` converts the 2-operand register-register form into a **3-operand** operation:
 - `%rd = %rs <op> zero_ext(imm13)` (the ext value replaces the ALU operand, NOT %rs)
 - The immediate from ext is **unsigned**
+- With 2 exts: 26-bit unsigned immediate (ext hi13 / ext lo13 / op %rd, %rs)
 
 This is distinct from the 2-operand immediate form `op %rd, sign6/imm6` where `%rd = %rd <op> imm6`.
 
-**Not yet implemented in the backend.** Currently all ALU immediate operations use Class 3 two-operand forms (`*_ri` / `*_ri32`). Implementing ext + Class 1 ALU as a 3-operand pattern could improve codegen for address calculations (e.g., `%rd = %rs + imm` in one ext+instruction pair instead of a mov+add sequence).
+**Implemented.** The backend selects `*_rri` pseudos (ADD_rri, SUB_rri, AND_rri, OR_rri, XOR_rri) for immediates outside the 2-operand range. These are expanded by ExpandExtPseudos to ext(s) + `*_rr_ext` (real Class 1 ALU with isCodeGenOnly=1). The 3-operand form saves a register copy when rd ≠ rs. For SUB, DAGCombiner canonicalizes `sub x, C` to `add x, -C`, so a `negImmZExt26Over63` pattern redirects to SUB_rri.
 
 ### Backend implementation
 
