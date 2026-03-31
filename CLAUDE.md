@@ -24,14 +24,14 @@ Read `DESIGN_SPEC.md` first — it contains all architecture details, design dec
 - **Args**: R12→R13→R14→R15 (overflow to stack)
 - **Return**: R10 (R10+R11 for 64-bit)
 - **Callee-saved**: R0–R3
-- **Scratch**: R4–R7
-- **Reserved**: R8 (カーネルテーブルベース = 0x0), R9 (reserved — NOT used as scratch in our design)
+- **Scratch**: R4–R7, R9
+- **Reserved**: R8 (カーネルテーブルベース = 0x0)
 - **sret**: struct return pointer passed implicitly in R12
 - **Frame**: SP-based, no frame pointer
 
 ## Design Decisions (Non-Negotiable)
 
-1. **R9 is NOT used as an implicit scratch register.** Unlike the original ext33 tool, our backend uses the register allocator to pick any available register for address materialization. This is safer for interrupt handling.
+1. **R9 is a scratch (caller-saved) register, same as R4–R7.** The P/ECE kernel's interrupt handler saves all GPRs via `pushn %r15` / `popn %r15` (INT_BEGIN/INT_END macros), so R9 is safe to use as a scratch register even during interrupts. The pceapi SDK stubs already treat R9 as caller-saved (ext33 ABI convention). Unlike the original design decision to keep R9 as Reserved, R9 is now in the allocatable register pool for better register pressure.
 
 2. **ext instruction generation follows pessimistic-then-relax strategy.** Code generation emits maximum-size sequences (ext+ext+op), then MC-layer relaxation shrinks them.
 
@@ -170,7 +170,7 @@ This is distinct from the 2-operand immediate form `op %rd, sign6/imm6` where `%
 
 - **Two ABIs exist** — S5U1C33000C vs S5U1C33001C. We use S5U1C33000C. If you see R6–R9 as args or R4/R5 as return, you're looking at the wrong ABI.
 - **`jp.d %rb` is FORBIDDEN** — Hardware bug: delay slot not executed when DMA is active (unavoidable in practice). Use `jp %rb` (non-delayed) instead. `call.d %rb` and `ret.d` are safe.
-- **ext atomicity** — ext+target sequences are trap-masked by hardware. But multi-instruction sequences (ext+ext+ld.w %rN, symbol + ld.w %rM, [%rN]) are NOT fully atomic — the gap after the ext-protected sequence is interruptible. This is why we don't use R9 as implicit scratch.
+- **ext atomicity** — ext+target sequences are trap-masked by hardware. But multi-instruction sequences (ext+ext+ld.w %rN, symbol + ld.w %rM, [%rN]) are NOT fully atomic — the gap after the ext-protected sequence is interruptible. On P/ECE this is safe because the kernel's interrupt handler saves all GPRs via `pushn %r15` / `popn %r15`.
 - **Address space is 28 bits** — Pointers are 32-bit in LLVM but the upper 4 bits are ignored by hardware. Be careful with address calculations.
 - **Delayed branch slot constraints** — Not every instruction can fill the slot. When in doubt, emit `nop`.
 - **pushn/popn operate on ranges** — `pushn %rN` pushes R0 through RN. `popn %rN` pops RN through R0. They are not single-register operations.
