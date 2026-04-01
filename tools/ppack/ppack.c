@@ -27,8 +27,11 @@
 #define ET_DYN      3
 #define EM_SE_C33   107
 
-#define SHT_PROGBITS  1
-#define SHT_NOBITS    8
+#define SHT_PROGBITS    1
+#define SHT_NOBITS      8
+#define SHT_INIT_ARRAY  14
+#define SHT_FINI_ARRAY  15
+#define SHT_PREINIT_ARRAY 16
 
 #define SHF_ALLOC     0x2
 #define SHF_WRITE     0x1
@@ -203,7 +206,10 @@ int readfile_elf(FILE *fp)
             return 1;
         }
 
-        if (shdr.sh_type == SHT_PROGBITS) {
+        if (shdr.sh_type == SHT_PROGBITS ||
+            shdr.sh_type == SHT_INIT_ARRAY ||
+            shdr.sh_type == SHT_FINI_ARRAY ||
+            shdr.sh_type == SHT_PREINIT_ARRAY) {
             /* Copy section data from file */
             printf("  %08x-%08x: %s\n", adr, adr + size - 1, 
                    (shdr.sh_flags & SHF_EXECINSTR) ? "CODE" : "DATA");
