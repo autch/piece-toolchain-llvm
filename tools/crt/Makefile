@@ -70,6 +70,7 @@ SDK_LIBS := \
 all: $(SYSROOT)/lib/crt0.o \
      $(SYSROOT)/lib/crti.o \
      $(SYSROOT)/lib/libpceapi.a \
+     $(SYSROOT)/lib/libcxxrt.a \
      $(SDK_LIBS)
 
 clean:
@@ -77,6 +78,7 @@ clean:
 	rm -f $(SYSROOT)/lib/crt0.o \
 	      $(SYSROOT)/lib/crti.o \
 	      $(SYSROOT)/lib/libpceapi.a \
+	      $(SYSROOT)/lib/libcxxrt.a \
 	      $(SDK_LIBS)
 
 $(BUILDDIR):
@@ -140,6 +142,19 @@ $(SYSROOT)/lib/libpceapi.a: gen_pceapi.py vector.h $(UTILITY_OBJS) | $(PCEAPI_ST
 		$(CLANG) $(ASFLAGS_CRT) $$s -o $${s%.s}.o || exit 1; \
 	done
 	$(LLVM_AR) rcs $@ $(PCEAPI_STUBS_DIR)/pce*.o $(UTILITY_OBJS)
+
+# -----------------------------------------------------------------------
+# libcxxrt.a — minimal C++ runtime stubs (operator new/delete, guards, etc.)
+# -----------------------------------------------------------------------
+
+$(BUILDDIR)/cxxrt.o: cxxrt.c | $(BUILDDIR)
+	$(CLANG) $(CFLAGS_CRT) $< -o $@
+
+$(BUILDDIR)/cxxnew.o: cxxnew.c | $(BUILDDIR)
+	$(CLANG) $(CFLAGS_CRT) $< -o $@
+
+$(SYSROOT)/lib/libcxxrt.a: $(BUILDDIR)/cxxrt.o $(BUILDDIR)/cxxnew.o
+	$(LLVM_AR) rcs $@ $^
 
 # -----------------------------------------------------------------------
 # EPSON SDK libraries — converted from lib33 SRF format to GNU ar ELF

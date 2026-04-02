@@ -46,6 +46,16 @@ SECTIONS {
         . = ALIGN(4);
     } > SRAM
 
+    /* C++ static constructors (and __attribute__((constructor))).
+     * Clang emits function pointers into .init_array; crt0 iterates them
+     * at startup before pceAppInit(). */
+    .init_array : ALIGN(4) {
+        PROVIDE_HIDDEN(__init_array_start = .);
+        KEEP(*(SORT(.init_array.*)))
+        KEEP(*(.init_array))
+        PROVIDE_HIDDEN(__init_array_end = .);
+    } > SRAM
+
     /* Initialised data — loaded as part of the binary image. */
     .data : ALIGN(4) {
         *(.data .data.*)

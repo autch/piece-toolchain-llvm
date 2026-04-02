@@ -1,11 +1,20 @@
 #include <piece.h>
-#include <string.h>
 
 extern unsigned char __START_DEFAULT_BSS[];
 extern unsigned char __END_DEFAULT_BSS[];
-extern unsigned char __SIZEOF_DEFAULT_BSS[];
 
 extern unsigned char _stacklen[];
+
+// Flag to indicate whether the CRT has been initialized.  This is used to prevent
+// calling app code before initialization is complete, which could happen if the
+// kernel sends a notification during initialization.
+static int crt_initialized = 0;
+
+/* .init_array boundaries (defined in linker script piece.ld) */
+extern void (*__init_array_start[])(void);
+extern void (*__init_array_end[])(void);
+
+extern void* memset( void *s, int c, unsigned long n );
 
 extern void pceAppInit( void );
 extern void pceAppProc( int cnt );
@@ -37,25 +46,48 @@ __attribute__((used)) static const pceAPPHEAD pceAppHead = {
 
 static void pceAppInit00( void )
 {
-	memset( __START_DEFAULT_BSS, 0, __SIZEOF_DEFAULT_BSS );
+	/* Clear BSS.  Both __START_DEFAULT_BSS and __END_DEFAULT_BSS 
+	 * are 4-byte aligned (linker script ALIGN(4)).
+	 */
+	unsigned long* bss = (unsigned long*)__START_DEFAULT_BSS;
+	unsigned long* end = (unsigned long*)__END_DEFAULT_BSS;
+	while (bss < end) {
+		*bss++ = 0;
+	}
+
 	if ( __version_check(0) ) return;
+
+	/* Call C++ static constructors / __attribute__((constructor)) */
+	{
+		void (**fn)(void) = __init_array_start;
+		while (fn < __init_array_end) {
+			(*fn)();
+			fn++;
+		}
+	}
+
 	pceAppInit();
+
+	crt_initialized = 1;
 }
 
 static void pceAppProc00( int cnt )
 {
 	if ( __version_check(cnt) ) return;
+	if( !crt_initialized ) return;
 	pceAppProc( cnt );
 }
 
 static void pceAppExit00( void )
 {
 	if ( __version_check(0) ) return;
+	if( !crt_initialized ) return;
 	pceAppExit();
 }
 
 static int pceAppNotify00( int type, int param )
 {
 	if ( __version_check(0) ) return APPNR_IGNORE;
+	if( !crt_initialized ) return APPNR_IGNORE;
 	return pceAppNotify( type, param );
 }

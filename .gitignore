@@ -8,4 +8,6 @@ __pycache__/
 *.sym
 *.map
 *.cm
+*.pex
+*.a
 
