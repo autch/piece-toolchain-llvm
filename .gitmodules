@@ -1,3 +1,6 @@
 [submodule "llvm"]
 	path = llvm
 	url = git@github.com:autch/llvm-s1c33.git
+[submodule "newlib"]
+	path = newlib
+	url = https://sourceware.org/git/newlib-cygwin.git
