@@ -4,6 +4,12 @@
 
 An LLVM backend for the EPSON S1C33000 32-bit RISC CPU core, targeting the Aquaplus P/ECE (S1C33209 SoC). The goal is to rebuild the P/ECE development environment on LLVM/Clang, producing binaries that can link with existing P/ECE SDK libraries and call kernel APIs with full ABI compatibility.
 
+## Language Rules for Generated Files
+
+- **`llvm/` and `tools/`**: All code, comments, docstrings, error messages, and any text written into files under these directories must be in **English only**. No Japanese.
+- **`docs/`**: Japanese is allowed (reference documents are in Japanese).
+- **`sdk/`**: This directory contains reference material only. **Do not modify any files under `sdk/`.**
+
 ## Critical Context
 
 Read `DESIGN_SPEC.md` first — it contains all architecture details, design decisions, ABI specifications, and implementation phasing. Do not deviate from the decisions documented there without explicit discussion.

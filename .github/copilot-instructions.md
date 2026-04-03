@@ -300,6 +300,12 @@ hello/, minimal/, fpkplay/      # Example applications
 docs/                           # Reference PDFs and notes
 ```
 
+## Language Rules for Generated Files
+
+- **`llvm/` and `tools/`**: All code, comments, docstrings, error messages, and any text written into files under these directories must be in **English only**. No Japanese.
+- **`docs/`**: Japanese is allowed (reference documents are in Japanese).
+- **`sdk/`**: This directory contains reference material only. **Do not modify any files under `sdk/`.**
+
 ## Implementation Phases
 
 Follow the phasing in DESIGN_SPEC.md §8. Write lit tests alongside every implementation.
