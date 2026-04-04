@@ -4,9 +4,9 @@ BIN=$(C33HOME)/build/bin
 SYSROOT=$(C33HOME)/sysroot/s1c33-none-elf
 
 CC=$(BIN)/clang --sysroot=$(SYSROOT)
-CFLAGS=-s --save-temps -O2 -Wall -DFROM="\"LLVM\""
+CFLAGS=-s -O2 -flto=full -Wall -DFROM="\"LLVM\""
 LD=$(BIN)/clang --sysroot=$(SYSROOT)
-LDFLAGS=-g --save-temps -Wl,-Map,hello.map
+LDFLAGS=-g -O2 -flto=full -Wl,-Map,hello.map
 PPACK=$(C33HOME)/tools/ppack/ppack
 
 all: hello_l.pex

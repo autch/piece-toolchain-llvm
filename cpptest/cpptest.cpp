@@ -4,11 +4,6 @@
 extern "C"
 {
     extern unsigned char _def_vbuff[128 * 88];
-
-    void _exit(int status) {
-        (void)status;
-        for (;;) {}
-    }
 }
 
 class AppBase

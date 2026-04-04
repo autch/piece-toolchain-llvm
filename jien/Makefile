@@ -1,13 +1,4 @@
-C33HOME = $(PWD)/../
-SDK=$(C33HOME)/sdk
-BIN=$(C33HOME)/build/bin
-SYSROOT=$(C33HOME)/sysroot/s1c33-none-elf
-
-CC=$(BIN)/clang --sysroot=$(SYSROOT)
-CFLAGS=-O1 -fno-inline -Wall
-LD=$(BIN)/clang --sysroot=$(SYSROOT)
-LDFLAGS=-g --save-temps -Wl,-Map,jien.map
-PPACK=$(C33HOME)/tools/ppack/ppack
+include ../llvm-c33.makefile
 
 all: jien.pex
 
