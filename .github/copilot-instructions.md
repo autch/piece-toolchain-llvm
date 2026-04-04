@@ -227,9 +227,11 @@ Not every instruction can fill a delay slot:
 
 When in doubt, emit `nop`.
 
-### 64-bit Integer Runtime Incomplete
+### 64-bit Integer Runtime
 
-EPSON's SDK lacks `__fixsfdi`, `__fixunssfdi`, `__floatdisf`, `__cmpdi2`. compiler-rt must provide these. 64-bit args use register pairs: R12(lo)+R13(hi) for first, R14(lo)+R15(hi) for second.
+EPSON's SDK never implemented `__fixsfdi`, `__fixunssfdi`, `__floatdisf`, `__cmpdi2`.
+**These are now provided by `libclang_rt.builtins-s1c33.a`** (compiler-rt, Phase 1 complete).
+64-bit args use register pairs: R12(lo)+R13(hi) for first, R14(lo)+R15(hi) for second.
 
 ### Division is Expensive
 
@@ -252,14 +254,17 @@ The end goal is not just a compiler — binaries must link with existing P/ECE S
 
 - **Format**: SRF (EPSON proprietary), not standard ELF
 - **Conversion tool**: `tools/srf2elf/` converts .o and .lib files to ELF
-- **Key libraries**: pceapi.lib (kernel stubs), fp.lib (float ops), idiv.lib (division), lib.lib (libc — has bugs, see errata.md)
-- **Link order**: `crt0.o crti.o [user .o] -lpceapi -lio -llib -lmath -lstring -lctype -lfp -lidiv`
+- **Key libraries**: pceapi.lib (kernel stubs), lib.lib (libc — has bugs, see errata.md)
+- **fp.lib / idiv.lib**: **Replaced** by `libclang_rt.builtins-s1c33.a` (compiler-rt Phase 1). SRF originals kept in `sdk/` for reference only.
+- **Link order**: `crt0.o crti.o [user .o] -lclang_rt.builtins-s1c33 -lcxxrt -lpceapi -lio -llib -lmath -lstring -lctype`
+- **Standard C headers**: From **newlib** (submodule `newlib/`). P/ECE-specific headers from `sdk/include/`.
 
 ### Build Pipeline
 
 ```
 .c → clang → .o (ELF)
-SDK .lib → srf2elf → .a (ELF)
+SDK .lib → srf2elf → .a (ELF)          (pceapi, io, lib, math, string, ctype)
+compiler-rt → libclang_rt.builtins-s1c33.a  (fp + idiv + i64 runtime)
   ↓
 ld.lld → .elf → llvm-objcopy -O binary → ppack → .pex
 ```
@@ -289,20 +294,24 @@ All reference documents are in `docs/` (mostly Japanese PDFs):
 ```
 llvm/llvm/lib/Target/S1C33/     # Backend implementation
 llvm/llvm/test/CodeGen/S1C33/   # Lit tests
+llvm/compiler-rt/lib/builtins/s1c33/  # S1C33 compiler-rt builtins (FP, div, i64)
+newlib/                         # newlib submodule (standard C headers for sysroot)
 tools/
   ├── srf2elf/                  # SRF → ELF converter
   ├── ppack/                    # ELF → .pex packager
-  ├── crt/                      # Startup code (crt0, crti)
+  ├── crt/                      # Startup code (crt0, crti, libcxxrt.a)
   ├── piece.ld                  # Linker script for P/ECE
   └── asm33conv/                # EPSON as33 → LLVM asm converter
 sysroot/s1c33-none-elf/         # Headers, libraries for --sysroot
+  ├── include/                  # newlib headers + P/ECE-specific headers
+  └── lib/                      # crt0.o, libclang_rt.builtins-s1c33.a, libcxxrt.a, etc.
 hello/, minimal/, fpkplay/      # Example applications
 docs/                           # Reference PDFs and notes
 ```
 
 ## Language Rules for Generated Files
 
-- **`llvm/` and `tools/`**: All code, comments, docstrings, error messages, and any text written into files under these directories must be in **English only**. No Japanese.
+- **`llvm/`, `newlib/` and `tools/`**: All code, comments, docstrings, error messages, git commit messages, and any text written into files under these directories must be in **English only**. No Japanese.
 - **`docs/`**: Japanese is allowed (reference documents are in Japanese).
 - **`sdk/`**: This directory contains reference material only. **Do not modify any files under `sdk/`.**
 
@@ -317,4 +326,8 @@ Follow the phasing in DESIGN_SPEC.md §8. Write lit tests alongside every implem
 5. **Phase 5** — SRF→ELF tool + linker script (link with SDK)
 6. **Phase 6** — SDK integration tests (full application build verified)
 
-**Current status**: Phase 6 in progress. Most features implemented and tested. Real device testing pending.
+**Current status**: Phase 6 complete. All sample apps verified on real P/ECE hardware (2026-03).
+Post-Phase-6 work in progress:
+- **compiler-rt Phase 1** ✅ — fp.lib/idiv.lib replaced by `libclang_rt.builtins-s1c33.a`; full i64 runtime
+- **newlib Phase 1** ✅ — Standard C headers from newlib; sysroot bootstrap self-contained
+- **newlib Phase 2** 🔲 — Replace lib.lib libc with newlib C sources (fixes sin/strtok/pow/strtod/ispunct bugs)

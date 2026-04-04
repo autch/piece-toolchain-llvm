@@ -116,19 +116,41 @@ AsmParser 対応を進行中。musfast.s で必要な命令は対応済み。
 
 ## ランタイム・ライブラリ
 
-### 11. compiler-rt の S1C33 向けビルド（任意）
-fp.lib/idiv.lib の代替。SDKライブラリを srf2elf で変換して使えるため
-必須ではないが、SDKへの依存を減らしたい場合に必要。
+### 11. compiler-rt の S1C33 向けビルド — **解決済み（Phase 1、2026-04）**
 
-### 12. newlib の S1C33 向けポーティング（任意）
-lib.lib の代替。lib.lib にはエラッタがあるため、
-newlib で置き換えれば既知バグを回避できる。
+~~fp.lib/idiv.lib の代替。SDKライブラリを srf2elf で変換して使えるため
+必須ではないが、SDKへの依存を減らしたい場合に必要。~~
 
-### 13. 64ビット整数ランタイムの完全性
-DESIGN_SPEC.md §5.10 に規定。__fixsfdi, __fixunssfdi, __floatdisf,
+fp.lib/idiv.lib のアセンブリを compiler-rt に移植済み。
+`compiler-rt/lib/builtins/s1c33/` に FP 演算・整数除算の全アセンブリを追加し、
+cmake ビルドシステムにも S1C33 を登録。`libclang_rt.builtins-s1c33.a` が
+`libfp.a`・`libidiv.a` を完全に置き換える。詳細: `docs/reports/compiler-rt-newlib-phase1-report.md`
+
+### 12. newlib の S1C33 向けポーティング — **Phase 1 完了（2026-04）**
+
+~~lib.lib の代替。lib.lib にはエラッタがあるため、
+newlib で置き換えれば既知バグを回避できる。~~
+
+**Phase 1（ヘッダ移行）完了**: newlib 4.6.0 ベースのサブモジュール（`autch/newlib-s1c33`）に
+S1C33 機械依存設定を追加（`machine/ieeefp.h`、`machine/setjmp.h`）。標準 C ヘッダ
+（`stdio.h`、`stdlib.h`、`string.h` 等）は newlib のものを使用、lib.lib 固有のエラッタを回避済み。
+P/ECE 固有ヘッダ（`piece.h` 等 11 件）のみ `sdk/include/` からコピー。
+
+**Phase 2（libc 本体の置き換え）は未着手。** `lib.lib` の libc 部分を newlib の C ソースで
+置き換えることで、エラッタ（`sin()`、`strtok()` 等）を完全に排除できる。現状は
+lib.lib の既知バグのある関数のみ回避策を取っている。
+
+### 13. 64ビット整数ランタイムの完全性 — **解決済み（Phase 1、2026-04）**
+
+~~DESIGN_SPEC.md §5.10 に規定。__fixsfdi, __fixunssfdi, __floatdisf,
 __cmpdi2 がエプソン純正では未実装だった。compiler-rt で補う必要あり。
 現状 SDKの fp.lib/idiv.lib を使っている限りは問題にならないが、
-float⇔long long 変換を使うコードでリンクエラーになる。
+float⇔long long 変換を使うコードでリンクエラーになる。~~
+
+compiler-rt の `GENERIC_SOURCES` に `fixsfdi.c`、`fixunssfdi.c`、`floatdisf.c`、
+`cmpdi2.c` 等が含まれるため、`libclang_rt.builtins-s1c33.a` に自動的に含まれる。
+さらに i64 シフト演算（`__ashldi3`、`__lshrdi3`、`__ashrdi3`）と符号なし int→float
+変換（`__floatunsisf`、`__floatunsidf`）も登録済み。
 
 ## ツール・周辺機能
 
@@ -153,17 +175,16 @@ float⇔long long 変換を使うコードでリンクエラーになる。
 - asm33conv がスタンドアロンツールとして §10.6 を忠実に実装
 - インラインアセンブリでは拡張命令は使用不可（制約事項）
 
-### 15. pceapi のソースビルド体制
+### 15. pceapi のソースビルド体制 — **解決済み**
 
-完了済み:
-- cstart.c からの crt0.o ビルド
-- defnotify.c からの crti.o ビルド
-
-未完了:
-- gen_pceapi.py によるカーネルAPIスタブの自動生成（vector.h から）
+- cstart.c からの crt0.o ビルド ✅
+- defnotify.c からの crti.o ビルド ✅
+- gen_pceapi.py によるカーネルAPIスタブの自動生成（vector.h から）✅
 - ユーティリティソース（memset.s, memcpy.s, stacklen.s, iodef.s,
-  version_check.c, def_vbuff.c）のビルドと libpceapi.a への統合
-- 上記が完了すれば srf2elf 変換の libpceapi.a への依存を完全に排除可能
+  version_check.c, def_vbuff.c）のビルドと libpceapi.a への統合 ✅
+- C++ ランタイムスタブ（libcxxrt.a: __cxa_* + operator new/delete + abort/_exit）✅
+- srf2elf 変換の libpceapi.a への依存を完全に排除済み。
+  `make -C tools/crt` 1コマンドで全ライブラリ生成可能。
 
 ### 16. lib33 フォーマットの未確定事項
 docs/lib33_format.md に記載の通り:
@@ -175,12 +196,13 @@ docs/lib33_format.md に記載の通り:
 ### 17. SDK ヘッダの Clang 互換性
 fpkplay.c で確認された問題:
 - Shift-JIS 文字列リテラルの警告 (-Winvalid-source-encoding)
-- memset 等のプロトタイプ未宣言警告 (-Wdeprecated-non-prototype)
+- ~~memset 等のプロトタイプ未宣言警告 (-Wdeprecated-non-prototype)~~ → **newlib の string.h 移行で解消済み**
 - -Wpointer-sign（unsigned char* ↔ char* 混在）
 - -Wunsequenced（`p += *p++ << 1` のような未定義動作）
 
-現状は -W オプションで抑制しているが、SDKヘッダの互換ラッパーを
-作る選択肢もある。
+現状は -W オプションで抑制している。SDK の C 標準ヘッダ（stdlib.h、string.h 等）は
+newlib に移行済みのため、残る警告はほぼ P/ECE 固有ヘッダ（piece.h、draw.h 等）由来。
+SDKヘッダの互換ラッパーを作る選択肢もあるが未着手。
 
 ### 18. ppack の decode モード
 ppack.c の decode_pack() は空実装。ELF対応版でも未実装のまま。

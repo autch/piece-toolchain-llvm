@@ -26,17 +26,17 @@ sudo apt install git cmake ninja-build g++ python3 zlib1g-dev
 
 ## 1. サブモジュールの初期化
 
-LLVM 本体はサブモジュールとして管理されている。
+LLVM 本体と newlib はサブモジュールとして管理されている。
 
 ```sh
-git submodule update --init llvm
+git submodule update --init llvm newlib
 ```
 
 > **注意:** `llvm/` は llvm-project 全体（数 GB）をチェックアウトする。
 > 通信帯域に制約がある場合は `--depth 1` を加えてシャロークローンにできる：
 >
 > ```sh
-> git submodule update --init --depth 1 llvm
+> git submodule update --init --depth 1 llvm newlib
 > ```
 >
 > ただしシャロークローンでは `git log` の履歴が欠落するため、
@@ -109,30 +109,25 @@ cd ../..
 
 コンパイラが参照するヘッダとライブラリを `sysroot/s1c33-none-elf/` に配置する。
 
-P/ECE 純正開発環境の `c:/usr/piece` 以下のうち、`include/` と `lib/` を `sdk/` ディレクトリ以下にコピーすること。今後カーネルのコンパイルもできるようになったら、同様に `sysdev/` 以下もここに置かれることになるはず。
+P/ECE 純正開発環境の `c:/usr/piece` 以下のうち、`include/` と `lib/` を `sdk/` ディレクトリ以下にコピーすること。標準 C ヘッダは newlib サブモジュールから自動的にインストールされる。
 
-### 4-1. SDK ヘッダのコピー
+### 4-1. sysroot の一括ビルド（CRT + newlib ヘッダ + SDK ライブラリ）
 
-```sh
-mkdir -p sysroot/s1c33-none-elf/include
-cp sdk/include/*.h sysroot/s1c33-none-elf/include/
-```
-
-### 4-2. リンカースクリプトのコピー
-
-```sh
-mkdir -p sysroot/s1c33-none-elf/lib
-cp tools/piece.ld sysroot/s1c33-none-elf/lib/piece.ld
-```
-
-### 4-3. sysroot の一括ビルド（CRT + SDK ライブラリ）
-
-スタートアップオブジェクト・カーネル API スタブ・SDK ライブラリ変換をすべてまとめて実行する。
+スタートアップオブジェクト・newlib ヘッダ・カーネル API スタブ・SDK ライブラリ変換・compiler-rt をすべてまとめて実行する。
 **手順 2 の LLVM ビルドが完了している必要がある。**
 
 ```sh
 make -C tools/crt
 ```
+
+以下が自動的に実行される：
+
+1. `newlib/` から標準 C ヘッダを `sysroot/s1c33-none-elf/include/` にインストール
+2. `sdk/include/` から P/ECE 固有ヘッダ（`piece.h`、`draw.h` 等）をコピー
+3. Clang 組み込みと競合するヘッダ（`stddef.h`、`stdarg.h`、`float.h`）を除去
+4. `crt0.o`・`crti.o`・`libpceapi.a` を LLVM でビルド
+5. `libclang_rt.builtins-s1c33.a`（compiler-rt）を cmake でビルド
+6. SDK ライブラリを SRF33 → ELF に変換
 
 以下が生成される：
 
@@ -141,7 +136,9 @@ make -C tools/crt
 | `sysroot/s1c33-none-elf/lib/crt0.o` | アプリヘッダ（`pceAppHead` @ 0x100000）、BSS ゼロクリア、コールバックラッパー |
 | `sysroot/s1c33-none-elf/lib/crti.o` | `pceAppNotify` デフォルト実装（弱シンボル・上書き可能） |
 | `sysroot/s1c33-none-elf/lib/libpceapi.a` | カーネル API スタブ + ユーティリティ |
-| `sysroot/s1c33-none-elf/lib/lib{io,lib,math,string,ctype,fp,idiv}.a` | SDK ライブラリ（SRF33 → ELF 自動変換） |
+| `sysroot/s1c33-none-elf/lib/libclang_rt.builtins-s1c33.a` | compiler-rt（FP 演算・整数除算・i64 算術ランタイム） |
+| `sysroot/s1c33-none-elf/lib/libcxxrt.a` | C++ ランタイムスタブ（operator new/delete 等） |
+| `sysroot/s1c33-none-elf/lib/lib{io,lib,math,string,ctype}.a` | SDK ライブラリ（SRF33 → ELF 自動変換） |
 
 > **注意:** `crt0.o` は `-O1` でコンパイルされる。BSS ゼロクリアループの
 > カウンタ変数が `[SP+0]` に置かれると、カーネルが SP を bss_end に設定した場合に
@@ -165,7 +162,8 @@ ls sysroot/s1c33-none-elf/lib/
 
 ```
 crt0.o  crti.o  piece.ld
-libctype.a  libfp.a  libidiv.a  libio.a  liblib.a
+libclang_rt.builtins-s1c33.a
+libcxxrt.a  libctype.a  libio.a  liblib.a
 libmath.a   libpceapi.a  libstring.a
 ```
 

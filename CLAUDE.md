@@ -6,7 +6,7 @@ An LLVM backend for the EPSON S1C33000 32-bit RISC CPU core, targeting the Aquap
 
 ## Language Rules for Generated Files
 
-- **`llvm/` and `tools/`**: All code, comments, docstrings, error messages, and any text written into files under these directories must be in **English only**. No Japanese.
+- **`llvm/`, `newlib/` and `tools/`**: All code, comments, docstrings, error messages, git commit messages, and any text written into files under these directories must be in **English only**. No Japanese.
 - **`docs/`**: Japanese is allowed (reference documents are in Japanese).
 - **`sdk/`**: This directory contains reference material only. **Do not modify any files under `sdk/`.**
 
@@ -83,7 +83,7 @@ Follow the phasing in DESIGN_SPEC.md §8:
 5. **Phase 5** — SRF→ELF conversion tool + linker script → can link with P/ECE SDK libraries
 6. **Phase 6** — P/ECE SDK integration tests → full application build verified
 
-**Current status**: Phase 6 complete. mini_nocrt / minimal / hello / print / jien / fpkplay / pmdplay all verified on real P/ECE hardware (2026-03).
+**Current status**: Phase 6 complete. mini_nocrt / minimal / hello / print / jien / fpkplay / pmdplay all verified on real P/ECE hardware (2026-03). Post-Phase-6: compiler-rt Phase 1 ✅ (fp.lib/idiv.lib replaced), newlib Phase 1 ✅ (standard C headers from newlib). Next: newlib Phase 2 (replace lib.lib libc with newlib C sources).
 
 Within each phase, write lit tests alongside the implementation. Every instruction encoding, every calling convention edge case, every relaxation pattern should have a test.
 
@@ -91,8 +91,8 @@ Within each phase, write lit tests alongside the implementation. Every instructi
 
 The project's end goal is not just a compiler — it must link with existing P/ECE SDK binaries. Key points:
 
-- **SDK libraries are SRF format** (EPSON proprietary), not ELF. A `srf2elf` conversion tool is needed (Phase 5). The SRF format spec is in the C compiler manual Appendix.
-- **fp.lib and idiv.lib** contain compiler runtime functions (`__addsf3`, `__divsi3`, etc.). These can alternatively be replaced by building LLVM's compiler-rt for S1C33000.
+- **fp.lib and idiv.lib** have been **replaced** by `libclang_rt.builtins-s1c33.a` (compiler-rt Phase 1). The SRF originals remain in `sdk/` for reference only. All float ops, integer division, and 64-bit integer runtime (`__fixsfdi` etc.) are now provided by compiler-rt.
+- **Standard C headers** come from the **newlib** submodule (`newlib/`). P/ECE-specific headers (11 files) still from `sdk/include/`.
 - **Kernel APIs** (pceLCDTrans, pcePadGet, etc.) live at fixed addresses in ROM. Symbol addresses come from `pcekn.sym`. Define these in the linker script or a header.
 - **Application entry** is via callbacks: the app implements `pceAppInit()` / `pceAppProc()` / `pceAppExit()`, which the kernel calls.
 - **Build pipeline**: `.c → clang → .o (ELF)` + `SDK .lib → srf2elf → .a (ELF)` → `ld.lld` → `.elf` → `llvm-objcopy -O binary`
