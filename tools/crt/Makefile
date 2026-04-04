@@ -275,20 +275,20 @@ $(SYSROOT)/lib/libpceapi.a: gen_pceapi.py vector.h $(UTILITY_OBJS) | $(PCEAPI_ST
 
 # -----------------------------------------------------------------------
 # libcxxrt.a — minimal C++ runtime stubs (operator new/delete, guards, etc.)
+#
+# All objects are compiled WITHOUT -flto.  Runtime stubs must be native ELF
+# so the linker can always resolve their symbols, regardless of whether the
+# application uses LTO.  Bitcode runtime objects cause subtle issues: LLVM
+# LTO treats certain well-known functions (abort, memcpy, …) as external
+# references even when defined in bitcode, leaving them unresolved.
 # -----------------------------------------------------------------------
 
 $(BUILDDIR)/cxxrt.o: cxxrt.c | $(BUILDDIR)
-	$(CLANG) $(CFLAGS_CRT) -flto=full $< -o $@
+	$(CLANG) $(CFLAGS_CRT) $< -o $@
 
 $(BUILDDIR)/cxxnew.o: cxxnew.c | $(BUILDDIR)
-	$(CLANG) $(CFLAGS_CRT) -flto=full $< -o $@
+	$(CLANG) $(CFLAGS_CRT) $< -o $@
 
-# halt.o is compiled WITHOUT -flto=full so that abort() and _exit() are
-# native ELF symbols.  LLVM LTO treats abort() as a well-known external
-# library function and emits an external call in the LTO output rather
-# than inlining any bitcode definition.  A native abort() satisfies this
-# reference and prevents liblib.a's abort.o (which calls _exit) from
-# being extracted.
 $(BUILDDIR)/halt.o: halt.c | $(BUILDDIR)
 	$(CLANG) $(CFLAGS_CRT) $< -o $@
 
