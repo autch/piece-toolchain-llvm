@@ -17,16 +17,24 @@ Generates binaries ABI-compatible with the existing P/ECE SDK libraries.
 | ターゲット CPU | EPSON S1C33000 (S1C33209) — 32-bit RISC, 16-bit fixed-width instructions |
 | ターゲットデバイス | Aquaplus P/ECE |
 | トリプル | `s1c33-none-elf` |
-| ステータス | **Phase 6 完了** — 実機動作確認済み（2026-03） |
+| ステータス | **Phase 6 完了 + compiler-rt / newlib Phase 1 完了** — 実機動作確認済み（2026-03/04） |
 | ベース LLVM | llvm-project (サブモジュール, `llvm/` 以下) |
 
-P/ECE SDK の既製ライブラリ（`pceapi.lib`, `fp.lib`, `idiv.lib` 等）は EPSON 独自の
-SRF33 形式で配布されています。それらはライセンス上このリポジトリ自体には含められないため、
+P/ECE SDK の既製ライブラリ（`pceapi.lib` 等）は EPSON 独自の SRF33 形式で配布されています。
+それらはライセンス上このリポジトリ自体には含められないため、
 本リポジトリに含まれる `tools/srf2elf/` と `tools/crt/` Makefile がそれらを ELF 形式へ
 変換・再コンパイルし、`sysroot/` に配置します。
+浮動小数点演算・整数除算ランタイム（`fp.lib`, `idiv.lib`）は
+**LLVM compiler-rt** (`libclang_rt.builtins-s1c33.a`) で置き換え済みです。
+標準 C ヘッダは **newlib** サブモジュール（`newlib/`）から提供されます。
 
-P/ECE SDK libraries (`pceapi.lib`, `fp.lib`, `idiv.lib`, etc.) are distributed in
-EPSON's proprietary SRF33 format. They cannot be included in this repository due to licensing restrictions, so the `tools/srf2elf/` converter and `tools/crt/` Makefile translate them to ELF and install them into `sysroot/`.
+P/ECE SDK libraries (e.g. `pceapi.lib`) are distributed in EPSON's proprietary SRF33 format.
+They cannot be included in this repository due to licensing restrictions, so the
+`tools/srf2elf/` converter and `tools/crt/` Makefile translate them to ELF and install
+them into `sysroot/`.
+Floating-point and integer-division runtime (`fp.lib`, `idiv.lib`) have been
+**replaced by LLVM compiler-rt** (`libclang_rt.builtins-s1c33.a`).
+Standard C headers are provided by the **newlib** submodule (`newlib/`).
 
 ---
 
@@ -53,14 +61,16 @@ The following applications have been verified on a real P/ECE device.
 ```
 llvm-c33/
 ├── llvm/                   LLVM サブモジュール (llvm-project)
-│   └── llvm/lib/Target/S1C33/   バックエンド実装
+│   ├── llvm/lib/Target/S1C33/   バックエンド実装
+│   └── compiler-rt/lib/builtins/s1c33/  compiler-rt S1C33 builtins
+├── newlib/                 newlib サブモジュール（標準 C ヘッダ提供）
 ├── build/                  CMake ビルドディレクトリ（初回 cmake 後に生成）
 ├── sdk/                    P/ECE SDK（別途入手・配置）
 │   ├── include/
 │   └── lib/
 ├── sysroot/s1c33-none-elf/ ビルド済み sysroot（make -C tools/crt で生成）
 ├── tools/
-│   ├── crt/                crt0.c, defnotify.c, libpceapi.a 生成 Makefile
+│   ├── crt/                crt0.c, libpceapi.a, libcxxrt.a 生成 Makefile
 │   ├── srf2elf/            SRF33 → ELF 変換ツール（Python）
 │   ├── elf2srf/            ELF → SRF33 変換ツール（Python, 実験的）
 │   ├── ppack/              ELF → .pex パッケージャ（C++, cmake）
@@ -73,6 +83,7 @@ llvm-c33/
 ├── pmdplay/                サンプルアプリ（PMD 音楽再生・複数楽曲・波形合成）
 ├── minimal/                サンプルアプリ（sysroot crt0 使用）
 ├── mini_nocrt/             サンプルアプリ（crt0 手書き・最小構成）
+├── cpptest/                C++ 動作確認アプリ（例外なし RTTI なし）
 ├── docs/
 │   ├── setup.md            セットアップ手順（← まずここを読む）
 │   ├── build-howto.md      アプリビルド手順
@@ -108,8 +119,8 @@ sudo apt install git cmake ninja-build g++ python3 zlib1g-dev ccache
 ### クイックスタート / Quick Start
 
 ```sh
-# 1. サブモジュール取得 / Fetch LLVM submodule
-git submodule update --init llvm
+# 1. サブモジュール取得 / Fetch submodules (LLVM + newlib)
+git submodule update --init llvm newlib
 
 # 2. LLVM ビルド / Build LLVM
 mkdir build && cd build
@@ -129,17 +140,11 @@ cd ..
 cd tools/ppack && cmake -G Ninja -B _build -DCMAKE_BUILD_TYPE=Release . && ninja -C _build
 cp _build/ppack ppack && cd ../..
 
-# 4. SDK ヘッダコピー（sdk/ を別途配置済みの場合）
-# Copy SDK headers (requires sdk/ placed separately)
-mkdir -p sysroot/s1c33-none-elf/include sysroot/s1c33-none-elf/lib
-cp sdk/include/*.h sysroot/s1c33-none-elf/include/
-cp tools/piece.ld  sysroot/s1c33-none-elf/lib/piece.ld
-
-# 5. sysroot 一括ビルド（CRT + SDK ライブラリ変換）
-# Build sysroot: CRT objects + SDK library conversion
+# 4. sysroot 一括ビルド（CRT + newlib ヘッダ + SDK ライブラリ変換）
+# Build sysroot: CRT objects + newlib headers + SDK library conversion
 make -C tools/crt
 
-# 6. サンプルアプリをビルド / Build sample app
+# 5. サンプルアプリをビルド / Build sample app
 cd hello && make
 ```
 
@@ -168,10 +173,10 @@ build/bin/clang \
 tools/ppack/ppack -e myapp.elf -omyapp.pex -n"My App"
 ```
 
-`clang` は自動的に crt0.o / piece.ld / `-lpceapi -lio -llib -lmath -lstring -lctype -lfp -lidiv` を追加します。
+`clang` は自動的に crt0.o / piece.ld / `-lclang_rt.builtins-s1c33 -lcxxrt -lpceapi -lio -llib -lmath -lstring -lctype` を追加します。
 
 `clang` automatically adds crt0.o, piece.ld, and
-`-lpceapi -lio -llib -lmath -lstring -lctype -lfp -lidiv`.
+`-lclang_rt.builtins-s1c33 -lcxxrt -lpceapi -lio -llib -lmath -lstring -lctype`.
 
 ### アプリケーションが実装するコールバック / Application Callbacks
 
@@ -196,6 +201,9 @@ void pceAppExit(void)    { /* called at termination  */ }
 - **ext+ALU 3-operand** — `ext imm / op %rd, %rs` → `rd = rs <op> imm`（レジスタコピー削減）
 - **crt0** — `pceAPPHEAD` 構造体配置・BSS ゼロクリア・バージョンチェック・コールバックラッパー
 - **libpceapi** — カーネル API スタブ自動生成（`gen_pceapi.py` + `vector.h`）
+- **compiler-rt** — 浮動小数点・整数除算・64bit 整数演算ランタイム (`libclang_rt.builtins-s1c33.a`)。fp.lib/idiv.lib を完全置き換え
+- **newlib ヘッダ** — 標準 C ヘッダ（`<string.h>`, `<stdlib.h>` 等）を newlib から提供。P/ECE 固有ヘッダとの共存対応
+- **C++ サポート** — `libcxxrt.a` による `__cxa_*` スタブ・`operator new/delete`（`-fno-exceptions -fno-rtti` 前提）
 - **SRF33 変換** — EPSON 独自形式 SDK ライブラリを ELF/GNU ar 形式へ変換
 - **構造体値渡し (byval)** — §6.5.4 準拠、全メンバをスタック経由で渡す（レジスタ不使用）
 
@@ -205,7 +213,7 @@ void pceAppExit(void)    { /* called at termination  */ }
 
 - **P/ECE 専用** — 汎用 S1C33 ターゲット向けクロスコンパイルには未対応箇所あり
 - **GP 最適化未実装** — R8 はカーネル ABI 規約（R8=0x0）を尊重して Reserved のみ
-- **64-bit 整数演算** — `__fixsfdi` 等は compiler-rt が未提供（実用上は問題なし）
+- **lib.lib のバグ関数** — sin()/strtok()/pow()/strtod()/ispunct() は EPSON 純正実装のまま（newlib Phase 2 で置き換え予定）
 - **`jp.d %rb` 禁止** — ハードウェアバグのため使用しない（詳細: `docs/errata.md`）
 
 ---
