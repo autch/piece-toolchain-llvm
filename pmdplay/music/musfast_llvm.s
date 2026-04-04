@@ -1,6 +1,6 @@
 // This file was automatically converted by asm33conv.py
 // from: musfast.s
-// on:   2026-03-29 04:14:29
+// on:   2026-04-04 19:22:28
 // Do not edit — re-run asm33conv to regenerate.
 ; ----------------------------------------------------------
 	.global	MakeWaveLP_fast
@@ -44,7 +44,6 @@ __LX16:
 __LX19:	
 
 	mlt.h	%r11,%r6	; d2 += x
-	nop
 	ld.w	%r11,%alr
 
 	sra	%r11, 8
@@ -53,7 +52,6 @@ __LX19:
 	add	%r4,%r11	; d1 += d2
 
 	mlt.h	%r4,%r14	; d1 *= vv
-	nop
 	ld.w	%r4,%alr
 
 	sra	%r4, 8	; *p++ = (d1>>=8)
@@ -114,7 +112,6 @@ __LX216:
 __LX219:
 
 	mlt.h	%r11,%r6	; d2 += x
-	nop
 	ld.w	%r11,%alr
 
 	sra	%r11, 8
@@ -123,7 +120,6 @@ __LX219:
 	add	%r4,%r11	; d1 += d2
 
 	mlt.h	%r4,%r14	; d1 *= vv
-	nop
 	ld.w	%r4,%alr
 
 	sra	%r4, 8	; *p++ = (d1>>=8)
@@ -189,7 +185,6 @@ __LX24:
 	ld.h	%r11,[%r13]	; tmp = *p
 	ld.h	%r10,%r4
 	mlt.h	%r10,%r14
-	nop
 	ld.w	%r11,%alr
 
 	sra	%r11, 8
@@ -227,7 +222,6 @@ __LX25:
 
 	ld.h	%r10,%r4
 	mlt.h	%r10,%r14
-	nop
 	ld.w	%r11,%alr
 
 	cmp	%r10,0
