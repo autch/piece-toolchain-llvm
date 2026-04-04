@@ -4,8 +4,11 @@
 #   $(SYSROOT)/lib/crt0.o      — application header + BSS init + callback wrappers
 #   $(SYSROOT)/lib/crti.o      — default pceAppNotify (weak, can be overridden)
 #   $(SYSROOT)/lib/libpceapi.a — kernel API stubs + utility objects
-#   $(SYSROOT)/lib/lib{io,lib,math,string,ctype,fp,idiv}.a
-#                              — EPSON SDK libraries converted from SRF lib33 format
+#   $(SYSROOT)/lib/libclang_rt.builtins-s1c33.a
+#                              — compiler-rt builtins + fp.lib/idiv.lib assembly
+#   $(SYSROOT)/lib/lib{io,lib,math,string,ctype}.a
+#                              — EPSON SDK libraries (minus fp/idiv, now in compiler-rt)
+#   $(SYSROOT)/include/        — newlib standard headers + P/ECE SDK headers
 #
 # Usage:
 #   make              — build everything into the sysroot
@@ -34,9 +37,17 @@ LLVM_AR := $(TOPDIR)/build/bin/llvm-ar
 PYTHON  := python3
 SRF2ELF := $(PYTHON) $(TOPDIR)/tools/srf2elf/srf2elf.py
 SDKLIB  := $(TOPDIR)/sdk/lib
+SDKINC  := $(TOPDIR)/sdk/include
 
 TARGET  := s1c33-none-elf
 INCLUDE := -I$(SYSROOT)/include
+
+# newlib header source
+NEWLIB_INCLUDE := $(TOPDIR)/newlib/newlib/libc/include
+
+# compiler-rt builtins source
+BUILTINS_SRC  := $(TOPDIR)/llvm/compiler-rt/lib/builtins
+S1C33_ASM_DIR := $(BUILTINS_SRC)/s1c33
 
 # CRT/library compiler flags
 # -ffreestanding: no hosted-env assumptions; suppresses memset/memcpy builtins
@@ -61,16 +72,16 @@ SDK_LIBS := \
 	$(SYSROOT)/lib/liblib.a \
 	$(SYSROOT)/lib/libmath.a \
 	$(SYSROOT)/lib/libstring.a \
-	$(SYSROOT)/lib/libctype.a \
-	$(SYSROOT)/lib/libfp.a \
-	$(SYSROOT)/lib/libidiv.a
+	$(SYSROOT)/lib/libctype.a
 
 .PHONY: all clean
 
-all: $(SYSROOT)/lib/crt0.o \
+all: $(SYSROOT)/include/.newlib-stamp \
+     $(SYSROOT)/lib/crt0.o \
      $(SYSROOT)/lib/crti.o \
      $(SYSROOT)/lib/libpceapi.a \
      $(SYSROOT)/lib/libcxxrt.a \
+     $(SYSROOT)/lib/libclang_rt.builtins-s1c33.a \
      $(SDK_LIBS)
 
 clean:
@@ -79,10 +90,129 @@ clean:
 	      $(SYSROOT)/lib/crti.o \
 	      $(SYSROOT)/lib/libpceapi.a \
 	      $(SYSROOT)/lib/libcxxrt.a \
+	      $(SYSROOT)/lib/libclang_rt.builtins-s1c33.a \
 	      $(SDK_LIBS)
+	rm -f $(SYSROOT)/include/.newlib-stamp
 
 $(BUILDDIR):
 	mkdir -p $@
+
+# -----------------------------------------------------------------------
+# newlib headers — install from newlib/newlib/libc/include/ into sysroot
+#
+# P/ECE SDK headers (piece.h, PIECE_Bmp.h, etc.) are preserved; newlib
+# provides the standard C headers (stdio.h, string.h, stdint.h, etc.).
+#
+# stdarg.h is intentionally excluded: clang provides it via -resource-dir.
+#
+# _REENT_ONLY: suppresses the full reentrancy structure (_reent) in newlib.
+#   P/ECE is single-threaded; the full reent machinery is unnecessary and
+#   would add overhead to every stdio call.
+# -----------------------------------------------------------------------
+
+# P/ECE SDK headers: canonical source is sdk/include/.
+# Listed as bare names here; install rule copies from $(SDKINC)/.
+PIECE_HEADER_NAMES := \
+	PIECE_Bmp.h \
+	PIECE_Std.h \
+	draw.h \
+	musdef.h \
+	muslib.h \
+	pclsprite.h \
+	piece.h \
+	s1c33cpu.h \
+	simple.h \
+	smcvals.h \
+	thread.h
+
+$(SYSROOT)/include/.newlib-stamp: $(NEWLIB_INCLUDE) | $(BUILDDIR)
+	@echo "Installing newlib headers into sysroot..."
+	@mkdir -p $(SYSROOT)/include/machine $(SYSROOT)/include/sys
+	@# Copy all newlib standard C headers
+	cp -r $(NEWLIB_INCLUDE)/. $(SYSROOT)/include/
+	@# Remove headers that Clang provides via resource-dir (not newlib's job):
+	@#   stdarg.h  — clang's __stdarg_*.h mechanism
+	@#   stddef.h  — gcc33 SDK relic: defines wchar_t as 16-bit unsigned short,
+	@#               and does not handle __need_wint_t; use Clang's instead
+	@#   float.h   — gcc33 SDK relic: hardcoded 1993 values; use Clang's instead
+	rm -f $(SYSROOT)/include/stdarg.h \
+	      $(SYSROOT)/include/stddef.h \
+	      $(SYSROOT)/include/float.h
+	@# Install P/ECE SDK headers from sdk/include/ (canonical source, always
+	@# available from a fresh clone; these override any newlib equivalents)
+	cp $(addprefix $(SDKINC)/,$(PIECE_HEADER_NAMES)) $(SYSROOT)/include/
+	@# Add _REENT_ONLY wrapper so #include <stdio.h> etc. doesn't pull in full reent
+	@printf '#ifndef _REENT_ONLY\n#define _REENT_ONLY\n#endif\n' > $(SYSROOT)/include/newlib_config.h
+	@touch $@
+	@echo "newlib headers installed."
+
+# -----------------------------------------------------------------------
+# libclang_rt.builtins-s1c33.a — compiler-rt builtins
+#
+# Combines:
+#   1. S1C33-specific assembly (recovered from fp.lib / idiv.lib):
+#      float ops, hardware integer divide/modulo
+#   2. compiler-rt C sources for operations not covered by assembly:
+#      64-bit integer arithmetic, bit-counting, __fixdfsi/__fixsfsi, etc.
+#
+# fp.lib/idiv.lib assembly overrides must precede the C objects in the
+# archive so the linker picks them up first. The REMOVE_ITEM logic in
+# CMakeLists.txt already excludes the C equivalents; here we just omit
+# them from BUILTIN_C_SRCS directly.
+# -----------------------------------------------------------------------
+
+BUILTINS_BUILDDIR := $(BUILDDIR)/builtins
+$(BUILTINS_BUILDDIR): | $(BUILDDIR)
+	mkdir -p $@
+
+# S1C33-specific assembly (recovered fp.lib / idiv.lib)
+S1C33_ASM_SRCS := $(wildcard $(S1C33_ASM_DIR)/*.S)
+S1C33_ASM_OBJS := $(patsubst $(S1C33_ASM_DIR)/%.S,$(BUILTINS_BUILDDIR)/s1c33_%.o,$(S1C33_ASM_SRCS))
+
+# compiler-rt C sources needed for bare-metal 32-bit S1C33
+# Excludes: anything covered by fp.lib/idiv.lib, *tf* (128-bit fp), OS-specific
+BUILTIN_C_SRCS_NAMES := \
+	muldi3.c udivdi3.c divdi3.c moddi3.c umoddi3.c \
+	ashldi3.c ashrdi3.c lshrdi3.c \
+	cmpdi2.c ucmpdi2.c \
+	fixdfdi.c fixsfdi.c \
+	fixdfsi.c fixsfsi.c \
+	fixunsdfdi.c fixunssfdi.c \
+	floatdidf.c floatdisf.c \
+	floatundidf.c floatundisf.c \
+	floatunsidf.c floatunsisf.c \
+	divmoddi4.c udivmoddi4.c \
+	mulodi4.c mulosi4.c \
+	negdi2.c \
+	absvdi2.c absvsi2.c \
+	addvdi3.c addvsi3.c \
+	subvdi3.c subvsi3.c \
+	mulvdi3.c mulvsi3.c \
+	negvdi2.c negvsi2.c \
+	clzdi2.c clzsi2.c \
+	ctzdi2.c ctzsi2.c \
+	ffsdi2.c ffssi2.c \
+	bswapdi2.c bswapsi2.c \
+	popcountdi2.c popcountsi2.c \
+	paritydi2.c paritysi2.c \
+	divmodsi4.c udivmodsi4.c \
+	powidf2.c powisf2.c \
+	int_util.c fp_mode.c
+
+BUILTIN_C_OBJS := $(patsubst %.c,$(BUILTINS_BUILDDIR)/%.o,$(BUILTIN_C_SRCS_NAMES))
+
+# Compile each C source from compiler-rt
+$(BUILTINS_BUILDDIR)/%.o: $(BUILTINS_SRC)/%.c | $(BUILTINS_BUILDDIR)
+	$(CLANG) --target=$(TARGET) -c -ffreestanding -fno-builtin -O2 \
+	         -I$(BUILTINS_SRC) $< -o $@
+
+# Assemble each recovered S1C33 assembly source
+$(BUILTINS_BUILDDIR)/s1c33_%.o: $(S1C33_ASM_DIR)/%.S | $(BUILTINS_BUILDDIR)
+	$(CLANG) --target=$(TARGET) -c -ffreestanding $< -o $@
+
+$(SYSROOT)/lib/libclang_rt.builtins-s1c33.a: $(S1C33_ASM_OBJS) $(BUILTIN_C_OBJS)
+	$(LLVM_AR) rcs $@ $^
+
 
 # -----------------------------------------------------------------------
 # CRT startup objects (directly linked into every application)
@@ -90,11 +220,11 @@ $(BUILDDIR):
 
 # crt0.o: application header (pceAPPHEAD at 0x100000), BSS zero-fill,
 #         pceAppInit00/pceAppProc00/pceAppExit00/pceAppNotify00 wrappers.
-$(SYSROOT)/lib/crt0.o: crt0.c | $(BUILDDIR)
+$(SYSROOT)/lib/crt0.o: crt0.c | $(BUILDDIR) $(SYSROOT)/include/.newlib-stamp
 	$(CLANG) $(CFLAGS_CRT) $< -o $@
 
 # crti.o: default pceAppNotify (weak symbol; overridable by the application).
-$(SYSROOT)/lib/crti.o: defnotify.c | $(BUILDDIR)
+$(SYSROOT)/lib/crti.o: defnotify.c | $(BUILDDIR) $(SYSROOT)/include/.newlib-stamp
 	$(CLANG) $(CFLAGS_CRT) $< -o $@
 
 # -----------------------------------------------------------------------
@@ -107,7 +237,7 @@ $(PCEAPI_STUBS_DIR): | $(BUILDDIR)
 	mkdir -p $@
 
 # Step 1: compile/assemble utility sources
-$(BUILDDIR)/version_check.o: version_check.c | $(BUILDDIR)
+$(BUILDDIR)/version_check.o: version_check.c | $(BUILDDIR) $(SYSROOT)/include/.newlib-stamp
 	$(CLANG) $(CFLAGS_CRT) $< -o $@
 
 $(BUILDDIR)/def_vbuff.o: def_vbuff.c | $(BUILDDIR)
@@ -148,16 +278,28 @@ $(SYSROOT)/lib/libpceapi.a: gen_pceapi.py vector.h $(UTILITY_OBJS) | $(PCEAPI_ST
 # -----------------------------------------------------------------------
 
 $(BUILDDIR)/cxxrt.o: cxxrt.c | $(BUILDDIR)
-	$(CLANG) $(CFLAGS_CRT) $< -o $@
+	$(CLANG) $(CFLAGS_CRT) -flto=full $< -o $@
 
 $(BUILDDIR)/cxxnew.o: cxxnew.c | $(BUILDDIR)
+	$(CLANG) $(CFLAGS_CRT) -flto=full $< -o $@
+
+# halt.o is compiled WITHOUT -flto=full so that abort() and _exit() are
+# native ELF symbols.  LLVM LTO treats abort() as a well-known external
+# library function and emits an external call in the LTO output rather
+# than inlining any bitcode definition.  A native abort() satisfies this
+# reference and prevents liblib.a's abort.o (which calls _exit) from
+# being extracted.
+$(BUILDDIR)/halt.o: halt.c | $(BUILDDIR)
 	$(CLANG) $(CFLAGS_CRT) $< -o $@
 
-$(SYSROOT)/lib/libcxxrt.a: $(BUILDDIR)/cxxrt.o $(BUILDDIR)/cxxnew.o
+$(SYSROOT)/lib/libcxxrt.a: $(BUILDDIR)/cxxrt.o $(BUILDDIR)/cxxnew.o $(BUILDDIR)/halt.o
 	$(LLVM_AR) rcs $@ $^
 
 # -----------------------------------------------------------------------
 # EPSON SDK libraries — converted from lib33 SRF format to GNU ar ELF
+#
+# Note: fp.lib and idiv.lib are NOT converted here — their functions are
+# now provided by libclang_rt.builtins-s1c33.a (recovered assembly).
 # -----------------------------------------------------------------------
 
 $(SYSROOT)/lib/libio.a:     $(SDKLIB)/io.lib     ; $(SRF2ELF) $< $@
@@ -165,5 +307,3 @@ $(SYSROOT)/lib/liblib.a:    $(SDKLIB)/lib.lib    ; $(SRF2ELF) $< $@
 $(SYSROOT)/lib/libmath.a:   $(SDKLIB)/math.lib   ; $(SRF2ELF) $< $@
 $(SYSROOT)/lib/libstring.a: $(SDKLIB)/string.lib ; $(SRF2ELF) $< $@
 $(SYSROOT)/lib/libctype.a:  $(SDKLIB)/ctype.lib  ; $(SRF2ELF) $< $@
-$(SYSROOT)/lib/libfp.a:     $(SDKLIB)/fp.lib     ; $(SRF2ELF) $< $@
-$(SYSROOT)/lib/libidiv.a:   $(SDKLIB)/idiv.lib   ; $(SRF2ELF) $< $@
