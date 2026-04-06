@@ -45,8 +45,8 @@ SRF_RELOC_TO_ELF = {
     0x0002: 7,   # REL_H   → R_S1C33_REL_H
     0x0003: 8,   # REL_M   → R_S1C33_REL_M
     0x0004: 9,   # REL_L   → R_S1C33_REL_L
-    0x0005: 6,   # REL_AH  → R_S1C33_REL21 (26-bit PC-rel high part)
-    0x0006: 6,   # REL_AL  → R_S1C33_REL21 (26-bit PC-rel low part — reuse)
+    0x0005: 10,  # REL_AH  → R_S1C33_REL_AH (2×ext+branch, ext1 imm13 = word_offset[25:13])
+    0x0006: 11,  # REL_AL  → R_S1C33_REL_AL (2×ext+branch, ext2 imm13 = word_offset[12:0])
     0x0007: 3,   # ABS_H   → R_S1C33_ABS_H
     0x0008: 4,   # ABS_M   → R_S1C33_ABS_M
     0x0009: 5,   # ABS_L   → R_S1C33_ABS_L
@@ -573,7 +573,7 @@ def srf_to_elf(srf_data, base=0):
     elf_sections.append((n_text_name, SHT_PROGBITS,
                          SHF_ALLOC | SHF_EXECINSTR,
                          code_addr if is_exec else 0,
-                         code_data, 0, 0, 2, 0))
+                         code_data, 0, 0, 4, 0))
 
     elf_sections.append((n_data_name, SHT_PROGBITS,
                          SHF_ALLOC | SHF_WRITE,
