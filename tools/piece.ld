@@ -71,6 +71,9 @@ SECTIONS {
     } > SRAM
     __END_DEFAULT_BSS = .;
     __SIZEOF_DEFAULT_BSS = __END_DEFAULT_BSS - __START_DEFAULT_BSS;
+    /* Alias for legacy SDK code that uses pce_app_bss_end as the start of
+     * the free heap area (above .bss, below the kernel heap). */
+    pce_app_bss_end = __END_DEFAULT_BSS;
 
     /DISCARD/ : {
         *(.note .note.*)

@@ -72,7 +72,8 @@ SDK_LIBS := \
 	$(SYSROOT)/lib/liblib.a \
 	$(SYSROOT)/lib/libmath.a \
 	$(SYSROOT)/lib/libstring.a \
-	$(SYSROOT)/lib/libctype.a
+	$(SYSROOT)/lib/libctype.a \
+	$(SYSROOT)/lib/libmuslib.a
 
 .PHONY: all clean
 
@@ -82,7 +83,11 @@ all: $(SYSROOT)/include/.newlib-stamp \
      $(SYSROOT)/lib/libpceapi.a \
      $(SYSROOT)/lib/libcxxrt.a \
      $(SYSROOT)/lib/libclang_rt.builtins-s1c33.a \
-     $(SDK_LIBS)
+     $(SDK_LIBS) \
+     $(SYSROOT)/lib/piece.ld
+
+$(SYSROOT)/lib/piece.ld: $(TOPDIR)/tools/piece.ld
+	cp $< $@
 
 clean:
 	rm -rf $(BUILDDIR)
@@ -306,4 +311,11 @@ $(SYSROOT)/lib/libio.a:     $(SDKLIB)/io.lib     ; $(SRF2ELF) $< $@
 $(SYSROOT)/lib/liblib.a:    $(SDKLIB)/lib.lib    ; $(SRF2ELF) $< $@
 $(SYSROOT)/lib/libmath.a:   $(SDKLIB)/math.lib   ; $(SRF2ELF) $< $@
 $(SYSROOT)/lib/libstring.a: $(SDKLIB)/string.lib ; $(SRF2ELF) $< $@
-$(SYSROOT)/lib/libctype.a:  $(SDKLIB)/ctype.lib  ; $(SRF2ELF) $< $@
+$(SYSROOT)/lib/libmuslib.a: $(SDKLIB)/muslib.lib ; $(SRF2ELF) $< $@
+# libctype.a: SDK function implementations + _ctype_[] table (newlib macros need it).
+$(BUILDDIR)/ctype_table.o: ctype_table.c | $(BUILDDIR) $(SYSROOT)/include/.newlib-stamp
+	$(CLANG) $(CFLAGS_CRT) $< -o $@
+
+$(SYSROOT)/lib/libctype.a: $(SDKLIB)/ctype.lib $(BUILDDIR)/ctype_table.o
+	$(SRF2ELF) $(SDKLIB)/ctype.lib $@
+	$(LLVM_AR) q $@ $(BUILDDIR)/ctype_table.o
