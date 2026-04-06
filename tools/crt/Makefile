@@ -72,10 +72,9 @@ SDK_LIBS := \
 	$(SYSROOT)/lib/liblib.a \
 	$(SYSROOT)/lib/libmath.a \
 	$(SYSROOT)/lib/libstring.a \
-	$(SYSROOT)/lib/libctype.a \
-	$(SYSROOT)/lib/libmuslib.a
+	$(SYSROOT)/lib/libctype.a
 
-.PHONY: all clean
+.PHONY: all clean muslib-install
 
 all: $(SYSROOT)/include/.newlib-stamp \
      $(SYSROOT)/lib/crt0.o \
@@ -84,7 +83,12 @@ all: $(SYSROOT)/include/.newlib-stamp \
      $(SYSROOT)/lib/libcxxrt.a \
      $(SYSROOT)/lib/libclang_rt.builtins-s1c33.a \
      $(SDK_LIBS) \
-     $(SYSROOT)/lib/piece.ld
+     $(SYSROOT)/lib/piece.ld \
+     muslib-install
+
+# muslib is built from source in tools/muslib/ (not converted from SDK SRF).
+muslib-install:
+	$(MAKE) -C $(TOPDIR)/tools/muslib install
 
 $(SYSROOT)/lib/piece.ld: $(TOPDIR)/tools/piece.ld
 	cp $< $@
@@ -121,8 +125,6 @@ PIECE_HEADER_NAMES := \
 	PIECE_Bmp.h \
 	PIECE_Std.h \
 	draw.h \
-	musdef.h \
-	muslib.h \
 	pclsprite.h \
 	piece.h \
 	s1c33cpu.h \
@@ -311,7 +313,6 @@ $(SYSROOT)/lib/libio.a:     $(SDKLIB)/io.lib     ; $(SRF2ELF) $< $@
 $(SYSROOT)/lib/liblib.a:    $(SDKLIB)/lib.lib    ; $(SRF2ELF) $< $@
 $(SYSROOT)/lib/libmath.a:   $(SDKLIB)/math.lib   ; $(SRF2ELF) $< $@
 $(SYSROOT)/lib/libstring.a: $(SDKLIB)/string.lib ; $(SRF2ELF) $< $@
-$(SYSROOT)/lib/libmuslib.a: $(SDKLIB)/muslib.lib ; $(SRF2ELF) $< $@
 # libctype.a: SDK function implementations + _ctype_[] table (newlib macros need it).
 $(BUILDDIR)/ctype_table.o: ctype_table.c | $(BUILDDIR) $(SYSROOT)/include/.newlib-stamp
 	$(CLANG) $(CFLAGS_CRT) $< -o $@
