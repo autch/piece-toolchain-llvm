@@ -280,8 +280,11 @@ ld.lld → .elf → llvm-objcopy -O binary → ppack → .pex
 
 All reference documents are in `docs/` (mostly Japanese PDFs):
 
+**Always check `docs/s1c33000_quick_reference.md` first** before opening any PDF. It is a machine-readable, verified summary of instruction encodings, register conventions, memory map, and trap table. Only fall back to the PDFs when the quick reference does not cover what you need (e.g., peripheral registers, SRF format details, interrupt application notes).
+
 | File | Contents |
 |------|----------|
+| `s1c33000_quick_reference.md` | **Instruction set, encoding, register map, memory map, trap table** — quick reference; check this first |
 | `S1C33000_コアCPUマニュアル_2001-03.pdf` | Instruction set, encoding, pipeline, traps |
 | `S1C33_Family_Cコンパイラパッケージ.pdf` | ABI (§6.5), ext33/pp33/as33 specs, SRF format |
 | `S1C33209_201_222テクニカルマニュアル_PRODUCT_FUNCTION.pdf` | Memory map, peripherals |

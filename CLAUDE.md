@@ -51,15 +51,18 @@ Read `DESIGN_SPEC.md` first — it contains all architecture details, design dec
 
 All reference documents are in the `docs/` directory:
 
+**Always check `docs/s1c33000_quick_reference.md` first** before opening any PDF. It is a machine-readable, verified summary of instruction encodings, register conventions, memory map, and trap table. Only fall back to the PDFs when the quick reference does not cover what you need (e.g., peripheral registers, SRF format details, interrupt application notes).
+
 | File | What it contains | When to consult |
 |---|---|---|
-| `S1C33000_コアCPUマニュアル_2001-03.pdf` | Instruction set, encoding, pipeline, traps | Instruction definitions, ext behavior, delay slots |
+| `s1c33000_quick_reference.md` | **Instruction set, encoding, register map, memory map, trap table** — quick reference | **First stop for all CPU/ISA questions** |
+| `S1C33000_コアCPUマニュアル_2001-03.pdf` | Instruction set, encoding, pipeline, traps | Encoding edge cases not covered by quick reference |
 | `S1C33_Family_Cコンパイラパッケージ.pdf` | ABI (§6.5), ext33/pp33/as33 specs, SRF format (Appendix) | Calling convention, register usage, stack frame, SRF→ELF conversion |
 | `S1C33209_201_222テクニカルマニュアル_PRODUCT_FUNCTION.pdf` | Memory map, peripherals | Linker script, multiplier features |
 | `S1C33_family_スタンダードコア用アプリケーションノート.pdf` | Interrupt handling patterns, boot sequence | Interrupt handler codegen, trap table layout |
 | `errata.md` | CPU/compiler/library errata | Hardware bugs (jp.d %rb), alignment traps, C library issues |
 
-These PDFs are in Japanese. Key sections are summarized in DESIGN_SPEC.md, but consult the originals for encoding details, bit-field layouts, and edge cases.
+These PDFs are in Japanese. Key sections are summarized in DESIGN_SPEC.md and `s1c33000_quick_reference.md`, but consult the originals for encoding details, bit-field layouts, and edge cases not found there.
 
 ## Build Workflow
 
