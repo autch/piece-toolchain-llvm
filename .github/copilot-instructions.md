@@ -85,6 +85,68 @@ Or using lit directly:
   -O2 -c test.c -o test.o
 ```
 
+## Testing with piece-emu (End-to-End)
+
+`piece-emu/` is a submodule containing a diagnostic S1C33209 emulator. It executes real S1C33 ELF binaries compiled by the LLVM toolchain and is the primary end-to-end test vehicle — no real hardware needed.
+
+**Key value**: stricter than real hardware. It actively reports misaligned access, `jp.d %rb`, `ext`+shift, and illegal delay-slot instructions that the real CPU silently ignores.
+
+### Build piece-emu
+
+```bash
+cmake -S piece-emu/src -B piece-emu/build-src -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=~/vcpkg/scripts/buildsystems/vcpkg.cmake
+ninja -C piece-emu/build-src
+```
+
+### Run the bare-metal test suite
+
+This suite compiles C test programs with the S1C33 LLVM toolchain and runs them on the emulator. Run after any backend change:
+
+```bash
+cd piece-emu/src/tests/bare_metal && make && make run
+```
+
+Expected output: `Results: 9 passed, 0 failed` (covers ALU, PSR flags, branches, load/store, ext immediates, shifts, multiply, step-division, miscellaneous instructions).
+
+### Run a single ELF on the emulator
+
+```bash
+# Plain run (exit 0=PASS, 1=FAIL)
+./piece-emu/build-src/piece-emu test.elf
+
+# With disassembly trace (for debugging codegen)
+./piece-emu/build-src/piece-emu --trace test.elf 2>trace.log
+
+# Limit cycles (catch infinite loops)
+./piece-emu/build-src/piece-emu --max-cycles 2000000 test.elf
+```
+
+### LLDB debugging via GDB RSP
+
+```bash
+# Terminal 1: start emulator in GDB-remote mode
+./piece-emu/build-src/piece-emu --gdb 1234 test.elf
+
+# Terminal 2: attach with LLDB
+lldb test.elf
+(lldb) gdb-remote 1234
+(lldb) b main
+(lldb) cont
+```
+
+The emulator serves Target Description XML (`qXfer:features:read`) so LLDB auto-discovers S1C33 registers. Software breakpoints (`Z0`/`z0`) are supported.
+
+### Typical workflow after a backend change
+
+```
+1. ninja -C build              # rebuild LLVM backend
+2. cd piece-emu/src/tests/bare_metal && make && make run
+3. All pass → done
+   Any fail → ./piece-emu/build-src/piece-emu --trace <failed>.elf 2>&1 | less
+             → attach LLDB if deeper inspection needed
+```
+
 ## Architecture Overview
 
 ### Target Triple and Naming
@@ -299,6 +361,10 @@ llvm/llvm/lib/Target/S1C33/     # Backend implementation
 llvm/llvm/test/CodeGen/S1C33/   # Lit tests
 llvm/compiler-rt/lib/builtins/s1c33/  # S1C33 compiler-rt builtins (FP, div, i64)
 newlib/                         # newlib submodule (standard C headers for sysroot)
+piece-emu/                      # Diagnostic S1C33209 emulator (submodule)
+  ├── src/                      # Emulator source (CPU core, peripherals, GDB RSP)
+  ├── src/tests/bare_metal/     # Bare-metal C test suite (runs on emulator)
+  └── build-src/piece-emu       # Built emulator binary
 tools/
   ├── srf2elf/                  # SRF → ELF converter
   ├── ppack/                    # ELF → .pex packager
