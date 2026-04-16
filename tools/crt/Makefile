@@ -11,8 +11,10 @@
 #   $(SYSROOT)/include/        — newlib standard headers + P/ECE SDK headers
 #
 # Usage:
-#   make              — build everything into the sysroot
-#   make clean        — remove build intermediates and sysroot outputs
+#   make                   — build everything into the sysroot
+#   make regen-builtins-asm — regenerate recovered fp.lib/idiv.lib assembly
+#                             into llvm/compiler-rt/lib/builtins/s1c33/
+#   make clean             — remove build intermediates and sysroot outputs
 #
 # -----------------------------------------------------------------------
 # NOTE: CRT/library builds use -ffreestanding.
@@ -34,8 +36,10 @@ SYSROOT  := $(TOPDIR)/sysroot/s1c33-none-elf
 
 CLANG   := $(TOPDIR)/build/bin/clang
 LLVM_AR := $(TOPDIR)/build/bin/llvm-ar
+LLVM_OBJDUMP := $(TOPDIR)/build/bin/llvm-objdump
 PYTHON  := python3
 SRF2ELF := $(PYTHON) $(TOPDIR)/tools/srf2elf/srf2elf.py
+OBJDUMP2ASM := $(PYTHON) $(TOPDIR)/tools/objdump2asm/objdump2asm.py
 SDKLIB  := $(TOPDIR)/sdk/lib
 SDKINC  := $(TOPDIR)/sdk/include
 
@@ -74,7 +78,7 @@ SDK_LIBS := \
 	$(SYSROOT)/lib/libstring.a \
 	$(SYSROOT)/lib/libctype.a
 
-.PHONY: all clean muslib-install
+.PHONY: all clean muslib-install regen-builtins-asm
 
 all: $(SYSROOT)/include/.newlib-stamp \
      $(SYSROOT)/lib/crt0.o \
@@ -171,6 +175,22 @@ $(SYSROOT)/include/.newlib-stamp: $(NEWLIB_INCLUDE) | $(BUILDDIR)
 BUILTINS_BUILDDIR := $(BUILDDIR)/builtins
 $(BUILTINS_BUILDDIR): | $(BUILDDIR)
 	mkdir -p $@
+
+regen-builtins-asm: | $(BUILDDIR)
+	@set -eu; \
+	tmpdir=$$(mktemp -d $(BUILDDIR)/regen-builtins-asm.XXXXXX); \
+	trap 'rm -rf "$$tmpdir"' EXIT; \
+	cp $(SDKLIB)/fp.lib $(SDKLIB)/idiv.lib "$$tmpdir"/; \
+	$(SRF2ELF) "$$tmpdir/fp.lib" "$$tmpdir/fp.a"; \
+	$(SRF2ELF) "$$tmpdir/idiv.lib" "$$tmpdir/idiv.a"; \
+	mkdir -p "$$tmpdir/fp" "$$tmpdir/idiv"; \
+	$(LLVM_OBJDUMP) -d -r --symbolize-operands "$$tmpdir/fp.a" | $(OBJDUMP2ASM) -o "$$tmpdir/fp"; \
+	$(LLVM_OBJDUMP) -d -r --symbolize-operands "$$tmpdir/idiv.a" | $(OBJDUMP2ASM) -o "$$tmpdir/idiv"; \
+	for src in "$$tmpdir"/fp/*.s "$$tmpdir"/idiv/*.s; do \
+		dst="$(S1C33_ASM_DIR)/$$(basename "$${src%.s}").S"; \
+		cp "$$src" "$$dst"; \
+	done; \
+	echo "Recovered builtins assembly updated in $(S1C33_ASM_DIR)."
 
 # S1C33-specific assembly (recovered fp.lib / idiv.lib)
 S1C33_ASM_SRCS := $(wildcard $(S1C33_ASM_DIR)/*.S)
