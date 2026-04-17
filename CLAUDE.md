@@ -46,6 +46,8 @@ Read `DESIGN_SPEC.md` first — it contains all architecture details, design dec
 4. **Interrupt handlers** use `__attribute__((interrupt_handler))` generating `pushn %r15` / `popn %r15` / `reti`.
 
 5. **as33/pp33/ext33 assembly syntax is NOT supported.** We generate standard LLVM assembly. The `^H/^M/^L` operators, `@rh/@rm/@rl` modifiers, and `x`-prefixed mnemonics are handled internally, not as assembly syntax.
+   Standard LLVM assembly does support direct PC-relative delayed calls such as
+   `call.d 4`, `call.d -3`, and `call.d label`.
 
 ## Reference Documentation
 
@@ -194,7 +196,7 @@ This is distinct from the 2-operand immediate form `op %rd, sign6/imm6` where `%
 - **Shift/rotate instructions do NOT support ext** — Manual states "シフト・ローテート命令を除き、ext命令による即値拡張が行えます". Max shift amount is 8 bits (imm4 mapping: 0000=0, ..., 0111=7, 1xxx=8). Shift > 8 must be split into multiple instructions in ISelDAGToDAG using MachineNodes (NOT PerformDAGCombine, which gets re-combined).
 - **Class 1 memory ext displacement is UNSIGNED — negative offsets silently break** — `ext imm13 / ld.* [%rb]` zero-extends imm13. If the optimizer folds a negative offset (e.g., -2 → ext 8190), the CPU reads address `rb + 8190` instead of `rb - 2`. This caused pmdplay O1 bugs (parts not playing, loops stopping). The fix: use `immZExt13` (not `immSExt13`) in DAG patterns so negative offsets are never folded. See "ext Immediate Signedness Rules" section above.
 - **SP-relative offsets are in scaled units, not bytes** — `ld.w [%sp+imm6]`: imm6 is in word units (×4). `ld.h`: halfword units (×2). `ld.b`: byte units (×1). `add/sub %sp, imm10`: word units (×4). The byte offset from eliminateFrameIndex must be divided by the scale factor before encoding. gcc33 encodes `ld.w [%sp+0xd]` for byte offset 52 (13 words × 4).
-- **PC-relative relocations use branch instruction address as base** — For ext+ext+call patterns, REL_H/REL_M/REL_L all use the call instruction's address (not the ext instruction's address) as PC reference. Same for REL21.
+- **PC-relative relocations use branch instruction address as base** — For ext+ext+call/call.d/jp/jp.d patterns, REL_H/REL_M/REL_L all use the branch/call instruction's address (not the ext instruction's address) as PC reference. Same for REL21.
 - **Conditional branch PC = instruction's own address, NOT next instruction** — S1C33 manual: `target = instr_addr + 2 × sign8`. `applyFixup` for `fixup_s1c33_pc_rel_8` uses `Offset = Value` (not `Value - 2`). The `Value - 2` form is only correct for `fixup_s1c33_pc_rel_21` where the fixup sits on the ext instruction 2 bytes before the branch. Getting this wrong causes back-edges to land 2 bytes off, potentially inside ext+ld pairs, causing loop-invariant hoisted loads to read 0.
 - **crt0 must be compiled with -O1** — At `-O0`, the BSS-clearing loop counter lives at `[SP+0]`. If the kernel places SP at `bss_end`, the loop overwrites its own stack variable while clearing BSS, causing silent corruption. `tools/crt/Makefile` already sets `-O1` in `CFLAGS_CRT` — do not override it.
 - **Backend uses SHT_RELA (not SHT_REL)** — `HasRelAddend=true` in `S1C33ELFObjectWriter.cpp`. Addends are stored in the `r_addend` field of RELA entries. This is essential for correctness with ELF mergeable sections (`.rodata.str1.1` etc.) where split relocations (ABS_H/M/L) with SHT_REL would each carry only partial addend bits, causing wrong merge lookups. All sysroot libraries (via srf2elf) also use SHT_RELA.

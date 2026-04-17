@@ -126,11 +126,12 @@ git submodule update --init llvm newlib
 mkdir build && cd build
 cmake -G Ninja ../llvm/llvm \
   -DCMAKE_BUILD_TYPE=Debug \
+  -DLLVM_TARGETS_TO_BUILD="" \
   -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="S1C33" \
   -DLLVM_DEFAULT_TARGET_TRIPLE="s1c33-none-elf" \
   -DLLVM_ENABLE_PROJECTS="clang;lld;lldb" \
   -DLLVM_INSTALL_UTILS=ON \
-  -DLLVM_USE_LINKER=lld \
+  -DLLVM_USE_LINKER=mold \
   -DCMAKE_C_COMPILER_LAUNCHER=ccache \
   -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 ninja
