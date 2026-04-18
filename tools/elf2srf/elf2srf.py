@@ -636,8 +636,33 @@ def exec_elf_to_srf(elf_data):
     emitted because all references are already resolved in the linked ELF.
     """
     e_entry, = struct.unpack_from('<I', elf_data, 24)
+    e_phoff,  = struct.unpack_from('<I', elf_data, 28)
     e_shoff,  = struct.unpack_from('<I', elf_data, 32)
+    e_phentsize, e_phnum = struct.unpack_from('<HH', elf_data, 42)
     e_shentsize, e_shnum, e_shstrndx = struct.unpack_from('<HHH', elf_data, 46)
+
+    # Build a VMA→LMA mapping from PT_LOAD program headers so that sections
+    # placed with `AT > ...` in the linker script (e.g. .fastrun / .fastdata
+    # whose VMA is in internal RAM but whose bytes live in SRAM) are merged
+    # by their storage address, not their runtime address.  Using sh_addr
+    # alone would collapse sections from disjoint memory regions into one
+    # huge zero-filled range and emit the wrong s_off.
+    PT_LOAD_CONST = 1
+    load_segments = []  # list of (p_vaddr, p_paddr, p_memsz)
+    for i in range(e_phnum):
+        o = e_phoff + i * e_phentsize
+        p_type, p_offset, p_vaddr, p_paddr, p_filesz, p_memsz, p_flags, p_align = \
+            struct.unpack_from('<IIIIIIII', elf_data, o)
+        if p_type == PT_LOAD_CONST and p_memsz > 0:
+            load_segments.append((p_vaddr, p_paddr, p_memsz))
+
+    def vma_to_lma(vma):
+        """Map a VMA to its load (storage) address via PT_LOAD segments.
+        Falls back to VMA when no covering segment is found."""
+        for vaddr, paddr, memsz in load_segments:
+            if vaddr <= vma < vaddr + memsz:
+                return paddr + (vma - vaddr)
+        return vma
 
     def read_shdr(i):
         o = e_shoff + i * e_shentsize
@@ -672,6 +697,11 @@ def exec_elf_to_srf(elf_data):
         if not (h['sh_flags'] & SHF_ALLOC) or h['sh_size'] == 0:
             continue
 
+        # Record both the runtime VMA (sh_addr) and the storage LMA.
+        # For normally-linked sections the two coincide; for sections placed
+        # with `AT > ...` in the linker script they differ.
+        h['load_addr'] = vma_to_lma(h['sh_addr'])
+
         if h['sh_flags'] & SHF_EXECINSTR:
             h['data'] = elf_data[h['sh_offset'] : h['sh_offset'] + h['sh_size']]
             code_shdrs.append(h)
@@ -683,20 +713,23 @@ def exec_elf_to_srf(elf_data):
             bss_shdrs.append(h)
 
     def merge_sections(hdrs):
-        """Merge sections into (base_vma, bytes). Gaps are zero-filled."""
+        """Merge CODE/DATA sections into (base_lma, bytes) using LMA.
+        Gaps are zero-filled.  SRF's s_off is the load (storage) address."""
         if not hdrs:
             return 0, b''
-        hdrs = sorted(hdrs, key=lambda h: h['sh_addr'])
-        base = hdrs[0]['sh_addr']
-        end  = max(h['sh_addr'] + h['sh_size'] for h in hdrs)
+        hdrs = sorted(hdrs, key=lambda h: h['load_addr'])
+        base = hdrs[0]['load_addr']
+        end  = max(h['load_addr'] + h['sh_size'] for h in hdrs)
         buf  = bytearray(end - base)
         for h in hdrs:
-            off = h['sh_addr'] - base
+            off = h['load_addr'] - base
             buf[off : off + len(h['data'])] = h['data']
         return base, bytes(buf)
 
     def bss_extent(hdrs):
-        """Return (base_vma, total_size) for BSS sections."""
+        """Return (base_vma, total_size) for BSS sections.
+        BSS has no storage (NOBITS); the runtime VMA is what the loader must
+        zero, so we use sh_addr here, not LMA."""
         if not hdrs:
             return 0, 0
         hdrs = sorted(hdrs, key=lambda h: h['sh_addr'])

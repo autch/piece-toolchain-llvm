@@ -3,6 +3,18 @@
 extern unsigned char __START_DEFAULT_BSS[];
 extern unsigned char __END_DEFAULT_BSS[];
 
+/* Internal-RAM placed sections (defined in piece.ld).
+ * All symbols are 4-byte aligned.  When a section is unused, start==end and
+ * the copy/clear loops below run zero iterations. */
+extern unsigned char __fastrun_start[];
+extern unsigned char __fastrun_end[];
+extern unsigned char __fastrun_load[];
+extern unsigned char __fastdata_start[];
+extern unsigned char __fastdata_end[];
+extern unsigned char __fastdata_load[];
+extern unsigned char __fastbss_start[];
+extern unsigned char __fastbss_end[];
+
 extern unsigned char _stacklen[];
 
 // Flag to indicate whether the CRT has been initialized.  This is used to prevent
@@ -53,6 +65,35 @@ static void pceAppInit00( void )
 	unsigned long* end = (unsigned long*)__END_DEFAULT_BSS;
 	while (bss < end) {
 		*bss++ = 0;
+	}
+
+	/* Copy .fastrun (hot code) from SRAM LMA to IRAM VMA. */
+	{
+		unsigned long* dst = (unsigned long*)__fastrun_start;
+		unsigned long* dend = (unsigned long*)__fastrun_end;
+		unsigned long* src = (unsigned long*)__fastrun_load;
+		while (dst < dend) {
+			*dst++ = *src++;
+		}
+	}
+
+	/* Copy .fastdata (hot initialised data) from SRAM LMA to IRAM VMA. */
+	{
+		unsigned long* dst = (unsigned long*)__fastdata_start;
+		unsigned long* dend = (unsigned long*)__fastdata_end;
+		unsigned long* src = (unsigned long*)__fastdata_load;
+		while (dst < dend) {
+			*dst++ = *src++;
+		}
+	}
+
+	/* Clear .fastbss (hot zero-initialised data) in IRAM. */
+	{
+		unsigned long* dst = (unsigned long*)__fastbss_start;
+		unsigned long* dend = (unsigned long*)__fastbss_end;
+		while (dst < dend) {
+			*dst++ = 0;
+		}
 	}
 
 	if ( __version_check(0) ) return;

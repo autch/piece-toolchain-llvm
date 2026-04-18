@@ -27,15 +27,11 @@
 #define ET_DYN      3
 #define EM_SE_C33   107
 
-#define SHT_PROGBITS    1
-#define SHT_NOBITS      8
-#define SHT_INIT_ARRAY  14
-#define SHT_FINI_ARRAY  15
-#define SHT_PREINIT_ARRAY 16
+#define PT_LOAD         1
 
-#define SHF_ALLOC     0x2
-#define SHF_WRITE     0x1
-#define SHF_EXECINSTR 0x4
+#define PF_X            0x1
+#define PF_W            0x2
+#define PF_R            0x4
 
 typedef struct {
     uint8_t  e_ident[16];
@@ -55,17 +51,15 @@ typedef struct {
 } Elf32_Ehdr;
 
 typedef struct {
-    uint32_t sh_name;
-    uint32_t sh_type;
-    uint32_t sh_flags;
-    uint32_t sh_addr;
-    uint32_t sh_offset;
-    uint32_t sh_size;
-    uint32_t sh_link;
-    uint32_t sh_info;
-    uint32_t sh_addralign;
-    uint32_t sh_entsize;
-} Elf32_Shdr;
+    uint32_t p_type;
+    uint32_t p_offset;
+    uint32_t p_vaddr;
+    uint32_t p_paddr;
+    uint32_t p_filesz;
+    uint32_t p_memsz;
+    uint32_t p_flags;
+    uint32_t p_align;
+} Elf32_Phdr;
 
 /* -------------------------------------------------------------------------
  * pffsFileHEADER — P/ECE filesystem executable header
@@ -136,22 +130,26 @@ static char usage[] =
     ;
 
 /* -------------------------------------------------------------------------
- * readfile_elf — load PROGBITS+ALLOC sections into databuff[]
+ * readfile_elf — load PT_LOAD segments into databuff[] by LMA
  *
- * Mirrors readfile_srf() behaviour:
+ * Uses program headers (not section headers) so that sections with LMA != VMA
+ * (e.g. .fastrun / .fastdata placed in internal RAM via `AT > SRAM`) land at
+ * their ROM/SRAM storage address, not their runtime IRAM address.  This is
+ * the same scheme llvm-objcopy -O binary uses.
+ *
  *   - databuff[] is pre-filled with 0xff
- *   - each SHT_PROGBITS section with SHF_ALLOC is copied in
- *   - SHT_NOBITS (.bss) regions are zeroed (BSS is also zeroed by cstart.o
- *     at runtime, but zeroing here gives a consistent in-memory image)
- *   - topadrs = lowest section address
- *   - endadrs = highest address reached by any ALLOC section
- *     (excludes BSS so the compressed payload doesn't bloat)
+ *   - for each PT_LOAD segment, p_filesz bytes from p_offset are copied to
+ *     p_paddr (LMA)
+ *   - segments with p_filesz == 0 (pure BSS) are skipped; crt0 clears BSS
+ *     at runtime, so no need to bloat the compressed payload
+ *   - topadrs = lowest p_paddr among loaded segments
+ *   - endadrs = highest p_paddr + p_filesz
  * ------------------------------------------------------------------------- */
 
 int readfile_elf(FILE *fp)
 {
     Elf32_Ehdr ehdr;
-    Elf32_Shdr shdr;
+    Elf32_Phdr phdr;
     unsigned int i;
 
     fseek(fp, 0, SEEK_SET);
@@ -174,60 +172,65 @@ int readfile_elf(FILE *fp)
         return 1;
     }
 
-    if (ehdr.e_shoff == 0 || ehdr.e_shnum == 0) {
-        fprintf(stderr, "ppack: ELF has no section headers\n");
+    if (ehdr.e_phoff == 0 || ehdr.e_phnum == 0) {
+        fprintf(stderr, "ppack: ELF has no program headers\n");
+        return 1;
+    }
+
+    /* First pass: find the lowest LMA to anchor databuff[] */
+    for (i = 0; i < ehdr.e_phnum; i++) {
+        uint32_t off = ehdr.e_phoff + i * ehdr.e_phentsize;
+        fseek(fp, off, SEEK_SET);
+        if (fread(&phdr, 1, sizeof(phdr), fp) != sizeof(phdr))
+            break;
+        if (phdr.p_type != PT_LOAD) continue;
+        if (phdr.p_filesz == 0) continue;
+        if (topadrs == 0 || phdr.p_paddr < topadrs)
+            topadrs = phdr.p_paddr;
+    }
+
+    if (topadrs == 0) {
+        fprintf(stderr, "ppack: no loadable segments found\n");
         return 1;
     }
 
     printf("\n");
 
-    for (i = 0; i < ehdr.e_shnum; i++) {
-        uint32_t off = ehdr.e_shoff + i * ehdr.e_shentsize;
+    /* Second pass: copy each PT_LOAD segment's file bytes to databuff. */
+    for (i = 0; i < ehdr.e_phnum; i++) {
+        uint32_t off = ehdr.e_phoff + i * ehdr.e_phentsize;
         fseek(fp, off, SEEK_SET);
-        if (fread(&shdr, 1, sizeof(shdr), fp) != sizeof(shdr))
+        if (fread(&phdr, 1, sizeof(phdr), fp) != sizeof(phdr))
             break;
 
-        /* Only care about ALLOC sections */
-        if (!(shdr.sh_flags & SHF_ALLOC))
-            continue;
-        if (shdr.sh_size == 0)
-            continue;
+        if (phdr.p_type != PT_LOAD) continue;
+        if (phdr.p_filesz == 0) continue;
 
-        uint32_t adr  = shdr.sh_addr;
-        uint32_t size = shdr.sh_size;
+        uint32_t adr  = phdr.p_paddr;
+        uint32_t size = phdr.p_filesz;
 
-        /* Set topadrs to the lowest section address seen */
-        if (topadrs == 0 || adr < topadrs)
-            topadrs = adr;
-
+        if (adr < topadrs) {
+            fprintf(stderr, "ppack: segment LMA 0x%08x below topadrs 0x%08x\n",
+                    adr, (unsigned)topadrs);
+            return 1;
+        }
         if (adr + size - topadrs >= sizeof(databuff)) {
-            fprintf(stderr, "ppack: section [%u] at 0x%08x+0x%x overflows buffer\n",
+            fprintf(stderr, "ppack: segment [%u] at 0x%08x+0x%x overflows buffer\n",
                     i, adr, size);
             return 1;
         }
 
-        if (shdr.sh_type == SHT_PROGBITS ||
-            shdr.sh_type == SHT_INIT_ARRAY ||
-            shdr.sh_type == SHT_FINI_ARRAY ||
-            shdr.sh_type == SHT_PREINIT_ARRAY) {
-            /* Copy section data from file */
-            printf("  %08x-%08x: %s\n", adr, adr + size - 1, 
-                   (shdr.sh_flags & SHF_EXECINSTR) ? "CODE" : "DATA");
-            fseek(fp, shdr.sh_offset, SEEK_SET);
-            fread(databuff + (adr - topadrs), 1, size, fp);
-            uint32_t end = adr + size;
-            if (end > endadrs)
-                endadrs = end;
-        } else if (shdr.sh_type == SHT_NOBITS) {
-            /* BSS: zero the region (cstart.o also zeroes at runtime) */
-            memset(databuff + (adr - topadrs), 0x00, size);
-            /* BSS is NOT included in endadrs — keep compressed size small */
-        }
-    }
+        printf("  %08x-%08x: %s (vaddr=%08x)\n",
+               adr, adr + size - 1,
+               (phdr.p_flags & PF_X) ? "CODE" : "DATA",
+               phdr.p_vaddr);
 
-    if (topadrs == 0) {
-        fprintf(stderr, "ppack: no loadable sections found\n");
-        return 1;
+        fseek(fp, phdr.p_offset, SEEK_SET);
+        fread(databuff + (adr - topadrs), 1, size, fp);
+
+        uint32_t end = adr + size;
+        if (end > endadrs)
+            endadrs = end;
     }
 
     return 0;
