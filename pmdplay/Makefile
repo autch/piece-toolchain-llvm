@@ -1,4 +1,8 @@
+#NO_LTO=1
 include ../llvm-c33.makefile
+
+CFLAGS := -O2 $(CFLAGS)
+LDFLAGS := -O2 $(LDFLAGS)
 
 all: pmdplay.pex
 
@@ -9,6 +13,8 @@ music/muslib.a:
 	make -C music muslib.a
 pmd/pmd_data.a:
 	make -C pmd pmd_data.a
+pmd/pmd_data.h:
+	make -C pmd pmd_data.h
 
 pmdplay.o: pmdplay.c pmd/pmd_data.h
 pmdplay_debug.o: pmdplay_debug.c

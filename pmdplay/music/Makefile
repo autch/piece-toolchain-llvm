@@ -1,4 +1,7 @@
+#NO_LTO=1
 include ../../llvm-c33.makefile
+
+CFLAGS := -O2 $(CFLAGS) -DFASTCODE
 
 # Piece �p makefile
 
@@ -42,6 +45,8 @@ INSTOBJS =\
 
 #$(PRGNAME).srf : $(OBJS) $(LIBOBJS)
 #	$(LD) $(LDFLAGS) -e$(PRGNAME).srf $(OBJS) $(LIBOBJS) $(INSTOBJS)
+
+all: lib
 
 lib: $(LIBNAME).a
 

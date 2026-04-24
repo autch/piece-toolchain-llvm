@@ -1,21 +1,22 @@
 #include <piece.h>
+#include <stdint.h>
 
-extern unsigned char __START_DEFAULT_BSS[];
-extern unsigned char __END_DEFAULT_BSS[];
+extern uint8_t __START_DEFAULT_BSS[];
+extern uint8_t __END_DEFAULT_BSS[];
 
 /* Internal-RAM placed sections (defined in piece.ld).
  * All symbols are 4-byte aligned.  When a section is unused, start==end and
  * the copy/clear loops below run zero iterations. */
-extern unsigned char __fastrun_start[];
-extern unsigned char __fastrun_end[];
-extern unsigned char __fastrun_load[];
-extern unsigned char __fastdata_start[];
-extern unsigned char __fastdata_end[];
-extern unsigned char __fastdata_load[];
-extern unsigned char __fastbss_start[];
-extern unsigned char __fastbss_end[];
+extern uint8_t __fastrun_start[];
+extern uint8_t __fastrun_end[];
+extern uint8_t __fastrun_load[];
+extern uint8_t __fastdata_start[];
+extern uint8_t __fastdata_end[];
+extern uint8_t __fastdata_load[];
+extern uint8_t __fastbss_start[];
+extern uint8_t __fastbss_end[];
 
-extern unsigned char _stacklen[];
+extern uint8_t _stacklen[];
 
 // Flag to indicate whether the CRT has been initialized.  This is used to prevent
 // calling app code before initialization is complete, which could happen if the
@@ -56,45 +57,40 @@ __attribute__((used)) static const pceAPPHEAD pceAppHead = {
 	__END_DEFAULT_BSS,
 };
 
+static void __memcpy(void* dst, const void* src, const void* dst_end)
+{
+	uint32_t* ps = (uint32_t*)src;
+	uint32_t* p = (uint32_t*)dst;
+	const uint32_t* pe = (const uint32_t*)dst_end;
+	while (p < pe) {
+		*p++ = *ps++;
+	}
+}
+
+static void __memset(void* dst, int c, const void* dst_end)
+{
+	uint32_t* p = (uint32_t*)dst;
+	const uint32_t* pe = (const uint32_t*)dst_end;
+	while (p < pe) {
+		*p++ = (uint32_t)c;
+	}
+}
+
 static void pceAppInit00( void )
 {
 	/* Clear BSS.  Both __START_DEFAULT_BSS and __END_DEFAULT_BSS 
 	 * are 4-byte aligned (linker script ALIGN(4)).
 	 */
-	unsigned long* bss = (unsigned long*)__START_DEFAULT_BSS;
-	unsigned long* end = (unsigned long*)__END_DEFAULT_BSS;
-	while (bss < end) {
-		*bss++ = 0;
-	}
+	__memset(__START_DEFAULT_BSS, 0, __END_DEFAULT_BSS);
 
 	/* Copy .fastrun (hot code) from SRAM LMA to IRAM VMA. */
-	{
-		unsigned long* dst = (unsigned long*)__fastrun_start;
-		unsigned long* dend = (unsigned long*)__fastrun_end;
-		unsigned long* src = (unsigned long*)__fastrun_load;
-		while (dst < dend) {
-			*dst++ = *src++;
-		}
-	}
+	__memcpy(__fastrun_start, __fastrun_load, __fastrun_end);
 
 	/* Copy .fastdata (hot initialised data) from SRAM LMA to IRAM VMA. */
-	{
-		unsigned long* dst = (unsigned long*)__fastdata_start;
-		unsigned long* dend = (unsigned long*)__fastdata_end;
-		unsigned long* src = (unsigned long*)__fastdata_load;
-		while (dst < dend) {
-			*dst++ = *src++;
-		}
-	}
+	__memcpy(__fastdata_start, __fastdata_load, __fastdata_end);
 
 	/* Clear .fastbss (hot zero-initialised data) in IRAM. */
-	{
-		unsigned long* dst = (unsigned long*)__fastbss_start;
-		unsigned long* dend = (unsigned long*)__fastbss_end;
-		while (dst < dend) {
-			*dst++ = 0;
-		}
-	}
+	__memset(__fastbss_start, 0, __fastbss_end);
 
 	if ( __version_check(0) ) return;
 

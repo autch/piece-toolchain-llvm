@@ -1,5 +1,3 @@
-#pragma clang optimize off
-
 /////////////////////////////////////////////////////////////////////////////
 //
 //             /
@@ -25,6 +23,7 @@
 //
 
 
+#pragma clang section text=".fastrun" data=".fastdata" bss=".fastbss"
 
 #include <string.h>
 #ifdef _WIN32
@@ -473,5 +472,4 @@ void StopMusic( void )
 }
 
 
-
-
+#pragma clang section text="" data="" bss=""

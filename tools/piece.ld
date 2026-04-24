@@ -8,8 +8,19 @@
  *
  * Memory map:
  *   SRAM: 0x100000 – 0x13CFFF (244 KB, shared with kernel heap)
- *   IRAM: 0x001000 – 0x001FFF (  4 KB, user area; 0x2000 is stack bottom)
- *   Stack: managed by the kernel below 0x002000 (not mapped here)
+ *   IRAM: 0x001000 – 0x001FFF (  4 KB, user area; 0x2000 is stack bottom
+ *                                     when _stacklen == 0)
+ *
+ * Stack & heap placement (runtime, controlled by pceAppHead.stack_size):
+ *   _stacklen == 0 (default)
+ *     Kernel sets SP = 0x2000; stack descends into IRAM [0x1000, 0x2000).
+ *     Kernel sets heap base = bss_end (SRAM).
+ *     IRAM placement users must keep .fastdata+.fastbss+.fastrun small
+ *     enough that the stack does not descend into __firam_end.
+ *   _stacklen > 0
+ *     Kernel sets SP = bss_end + stack_size; stack & heap are in SRAM.
+ *     IRAM [0x1000, 0x2000) is fully available for placed objects.
+ *     Override via `-Wl,--defsym,_stacklen=0x1000` (or similar).
  *
  * Required external symbols (provided by cstart.o / this script):
  *   __START_DEFAULT_BSS  – start of .bss (address)
@@ -24,6 +35,14 @@
  *                 that relocate the stack into SRAM (via pceAppHead) can use
  *                 this to decide whether placement still fits.
  *   ASSERT enforces that .fastbss_end stays within the 0x1000–0x2000 user area.
+ *
+ * Section ordering constraint (IMPORTANT):
+ *   .bss must come AFTER .fastdata and .fastrun in SRAM so that
+ *   __END_DEFAULT_BSS (reported to the kernel as bss_end, used as the
+ *   initial heap base by ResetHeap) sits past the LMAs of .fastdata and
+ *   .fastrun.  Otherwise the kernel's ResetHeap(bss_end) writes heap
+ *   metadata INTO the .fastrun/.fastdata LMA bytes before crt0 has a
+ *   chance to copy them to IRAM, corrupting the placed code at startup.
  */
 
 /* The P/ECE kernel accesses the application header at 0x100000 directly by
@@ -73,31 +92,20 @@ SECTIONS {
         . = ALIGN(4);
     } > SRAM
 
-    /* BSS — zero-initialised by pceAppInit00 at startup via memset. */
-    .bss (NOLOAD) : ALIGN(4) {
-        __START_DEFAULT_BSS = .;
-        *(.bss .bss.*)
-        *(COMMON)
-        . = ALIGN(4);
-        __END_DEFAULT_BSS = .;
-    } > SRAM
-    __SIZEOF_DEFAULT_BSS = __END_DEFAULT_BSS - __START_DEFAULT_BSS;
-    /* Alias for legacy SDK code that uses pce_app_bss_end as the start of
-     * the free heap area (above .bss, below the kernel heap). */
-    pce_app_bss_end = __END_DEFAULT_BSS;
-
     /* Internal-RAM placed code/data.  VMA is in IRAM (0x1000-0x2000); LMA
-     * sits contiguously after .data in SRAM (.bss is NOLOAD and does not
-     * advance the SRAM LMA cursor) so the bytes ride along in the .pex image.
-     * crt0 copies them into IRAM at startup.  When unused, all sections have
-     * size 0 and add no image bytes nor runtime cost.
+     * sits in SRAM and the bytes ride along in the .pex image.  crt0 copies
+     * them into IRAM at startup.  When unused, all sections have size 0 and
+     * add no image bytes nor runtime cost.
+     *
+     * These sections come BEFORE .bss so that their LMAs are covered by the
+     * bss_end address reported to the kernel.  See header comment about the
+     * ResetHeap(bss_end) LMA-corruption hazard.
      *
      * Order in IRAM is DATA FIRST, CODE LAST:
      *   0x1000 → .fastdata → .fastbss → .fastrun → __firam_end
-     * Some applications overlay .fastrun at runtime.  Placing variables at
-     * lower addresses than code guarantees an overlay that grows beyond the
-     * original .fastrun cannot silently clobber variables; it would instead
-     * overflow upward into stack, which fails loudly. */
+     * Placing variables at lower addresses than code makes the .fastrun end
+     * the one that bumps into the stack top when _stacklen == 0, which fails
+     * loudly via stack corruption rather than silently overwriting .fastbss. */
     .fastdata : ALIGN(4) {
         __fastdata_start = .;
         *(.fastdata .fastdata.*)
@@ -123,6 +131,23 @@ SECTIONS {
 
     /* First free IRAM byte above placed objects. */
     PROVIDE(__firam_end = __fastrun_end);
+
+    /* BSS — must come AFTER the IRAM LMAs in SRAM so that __END_DEFAULT_BSS
+     * (= pceAppHead.bss_end = kernel heap base) is past the LMAs.  Otherwise
+     * ResetHeap(bss_end) would write heap metadata into the .fastrun/.fastdata
+     * LMA bytes before crt0 copies them to IRAM.  Zero-initialised by
+     * pceAppInit00 at startup. */
+    .bss (NOLOAD) : ALIGN(4) {
+        __START_DEFAULT_BSS = .;
+        *(.bss .bss.*)
+        *(COMMON)
+        . = ALIGN(4);
+        __END_DEFAULT_BSS = .;
+    } > SRAM
+    __SIZEOF_DEFAULT_BSS = __END_DEFAULT_BSS - __START_DEFAULT_BSS;
+    /* Alias for legacy SDK code that uses pce_app_bss_end as the start of
+     * the free heap area (above .bss, below the kernel heap). */
+    pce_app_bss_end = __END_DEFAULT_BSS;
 
     /DISCARD/ : {
         *(.note .note.*)
