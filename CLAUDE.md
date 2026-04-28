@@ -10,6 +10,40 @@ An LLVM backend for the EPSON S1C33000 32-bit RISC CPU core, targeting the Aquap
 - **`docs/`**: Japanese is allowed (reference documents are in Japanese).
 - **`sdk/`**: This directory contains reference material only. **Do not modify any files under `sdk/`.**
 
+## Source File Encoding: Shift_JIS for P/ECE-Touching Code
+
+Some source files in this project must be saved in **Shift_JIS (CP932)** rather than UTF-8. Two reasons drive this:
+
+1. **String literals destined for the P/ECE display system** (e.g., `pceFontPrintf`, `pceFontPutStr`) — the BIOS font renderer reads bytes as Shift_JIS directly and does not transcode. The bytes in the string literal must be SJIS.
+2. **Files originally authored by EPSON / OeRSTED** (P/ECE SDK provenance) often carry SJIS comment blocks at the top — copyright notices, change logs, design notes in Japanese. When we adopt such a file into `tools/crt/` (or anywhere else under `tools/`), we keep the original encoding so the comments remain readable to humans who know the SDK.
+
+Examples currently in the tree:
+- `tools/crt/version_check.c` — SDK-derived; SJIS comments + SJIS strings for `pceFontPrintf`
+- `tools/crt/memcpy.s`, `tools/crt/memset.s` — SDK-derived; SJIS comments
+- `tools/crt/defnotify.c` — newly authored by us; pure ASCII (no SJIS needed)
+- (any future SDK-derived or P/ECE-display-touching source)
+
+Concretely:
+
+- Save the file as **Shift_JIS (CP932)**, not UTF-8. `file <path>` should report `Non-ISO extended-ASCII text` (or similar) rather than `UTF-8`.
+- Do NOT use `\xNN`-escape sequences as a substitute for direct SJIS source. They produce identical bytes at runtime, but lose editability and are easy to transcribe wrong.
+- Do NOT re-encode SDK-derived files to UTF-8 when editing — that corrupts SJIS comments AND any embedded SJIS string literals.
+- **Clang does NOT support `-fexec-charset=`**, so the "UTF-8 source + transcode-on-compile" pattern available with GCC is unavailable. Authoring (or preserving) the source as Shift_JIS is the only practical workflow.
+
+For purely new-authored files (no SDK provenance, no P/ECE display strings), the existing English-only language rule applies and the encoding is plain ASCII / UTF-8 — these don't need any SJIS handling. When we *write new code* the comments are English and the issue does not arise; the SJIS rule mainly bites when we are touching SDK-derived sources.
+
+### Editing SJIS files transparently
+
+When the editor / tool chain is UTF-8-centric and you must read or modify an SJIS file:
+
+```sh
+iconv -f CP932 -t UTF-8 file.c > /tmp/file.utf8.c   # read as UTF-8
+# (review or hand-edit /tmp/file.utf8.c if needed)
+iconv -f UTF-8 -t CP932 /tmp/file.utf8.c > file.c   # write back as SJIS
+```
+
+If you only need to inspect bytes (e.g., to verify a string literal compiles to the expected SJIS bytes), `xxd file.c` shows the raw bytes regardless of encoding. After any edit, re-run `file <path>` to confirm it is still `Non-ISO extended-ASCII text` and not `UTF-8 text`.
+
 ## Critical Context
 
 Read `DESIGN_SPEC.md` first — it contains all architecture details, design decisions, ABI specifications, and implementation phasing. Do not deviate from the decisions documented there without explicit discussion.
