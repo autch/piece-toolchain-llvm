@@ -4,6 +4,13 @@
 extern uint8_t __START_DEFAULT_BSS[];
 extern uint8_t __END_DEFAULT_BSS[];
 
+/* Address reported to the kernel via pceAPPHEAD.bss_end.  Kernel uses
+ * this as its SRAM heap base (see InitHeapAndSP / ResetHeap in
+ * sdk/sysdev/pcekn/runapp.c), so it must sit at or above
+ * __END_DEFAULT_BSS.  piece.ld provides _pceheapstart as a PROVIDE
+ * default of __END_DEFAULT_BSS, overridable via -Wl,--defsym. */
+extern uint8_t _pceheapstart[];
+
 /* Internal-RAM placed sections (defined in piece.ld).
  * All symbols are 4-byte aligned.  When a section is unused, start==end and
  * the copy/clear loops below run zero iterations. */
@@ -54,7 +61,7 @@ __attribute__((used)) static const pceAPPHEAD pceAppHead = {
 	pceAppExit00,
 	pceAppNotify00,
 	(unsigned long)_stacklen,
-	__END_DEFAULT_BSS,
+	_pceheapstart,	/* = __END_DEFAULT_BSS by default; overridable */
 };
 
 static void __memcpy(void* dst, const void* src, const void* dst_end)

@@ -1,6 +1,8 @@
 #include <piece.h>
 
-extern unsigned char _def_vbuff[128*88];
+/* _def_vbuff is provided by piece.ld as PROVIDE(_def_vbuff = 0x13c000),
+ * an alias for SYSERRVBUFF.  No BSS storage is allocated for it. */
+extern unsigned char _def_vbuff[];
 
 /* __attribute__((weak)): allows applications to override pceAppNotify.
  * Without this, directly linking crti.o alongside an app that defines its
@@ -16,4 +18,3 @@ __attribute__((weak)) int pceAppNotify( int type, int param )
 	}
 	return APPNR_IGNORE;
 }
-

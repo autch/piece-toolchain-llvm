@@ -52,8 +52,35 @@ _start = 0x100000;
 
 /* Stack size reported to the kernel via pceAppHead.stack_size.
  * The value 0 means "use kernel default".  Applications may override this
- * by defining _stacklen as an absolute symbol before linking. */
+ * by defining _stacklen as an absolute symbol before linking.
+ * --defsym works here because crt0.c reads _stacklen as a runtime
+ * symbol value, not in any script-internal expression. */
 PROVIDE(_stacklen = 0);
+
+/* Bytes reserved for the kernel-managed pceHeap, immediately above
+ * .bss in SRAM.  newlib's _sbrk hands out memory starting at
+ * _pceheapstart + _pceheapsize and grows upward without an upper
+ * bound — the kernel reserves the high SRAM addresses for its own
+ * work areas (zlib buffers, system menu vbuff, etc.), and we never
+ * try to compute a hard top from physical SRAM size because there
+ * is no app-visible boundary (system_info.sram_end is runtime-
+ * defined and we cannot consult it at link time).  Apps that grow
+ * newlib's heap beyond the actual kernel top corrupt kernel work
+ * areas, the same MMU-less trust model the platform applies to
+ * stack overflow.  Override via -Wl,--defsym=_pceheapsize=N. */
+PROVIDE(_pceheapsize = 0x2000);
+
+/* _def_vbuff aliases SYSERRVBUFF, the kernel-reserved 4 KB region
+ * at 0x13c000.  The kernel uses this address as a working buffer in
+ * three mutually-exclusive paths (system menu while app is suspended,
+ * system error display while the kernel has taken over, and the
+ * BIOS-too-old error display issued from version_check before the
+ * app exits), so all three can share the same backing without
+ * coordinating.  Aliasing avoids the 11 KB of BSS the SDK would
+ * otherwise reserve in every app, and avoids the problem of placing
+ * an 11 KB array adjacent to newlib state where kernel writes could
+ * corrupt malloc bookkeeping. */
+PROVIDE(_def_vbuff = 0x13c000);
 
 MEMORY {
     SRAM (rwx) : ORIGIN = 0x100000, LENGTH = 0x3D000
@@ -132,11 +159,11 @@ SECTIONS {
     /* First free IRAM byte above placed objects. */
     PROVIDE(__firam_end = __fastrun_end);
 
-    /* BSS — must come AFTER the IRAM LMAs in SRAM so that __END_DEFAULT_BSS
-     * (= pceAppHead.bss_end = kernel heap base) is past the LMAs.  Otherwise
-     * ResetHeap(bss_end) would write heap metadata into the .fastrun/.fastdata
-     * LMA bytes before crt0 copies them to IRAM.  Zero-initialised by
-     * pceAppInit00 at startup. */
+    /* BSS — must come AFTER the IRAM LMAs in SRAM so __END_DEFAULT_BSS
+     * (= pceAppHead.bss_end = kernel heap base) is past the LMAs.
+     * Otherwise the kernel's ResetHeap(bss_end) would write heap
+     * metadata into the .fastrun/.fastdata LMA bytes before crt0 copies
+     * them to IRAM.  Zero-initialised by pceAppInit00 at startup. */
     .bss (NOLOAD) : ALIGN(4) {
         __START_DEFAULT_BSS = .;
         *(.bss .bss.*)
@@ -145,9 +172,35 @@ SECTIONS {
         __END_DEFAULT_BSS = .;
     } > SRAM
     __SIZEOF_DEFAULT_BSS = __END_DEFAULT_BSS - __START_DEFAULT_BSS;
-    /* Alias for legacy SDK code that uses pce_app_bss_end as the start of
-     * the free heap area (above .bss, below the kernel heap). */
-    pce_app_bss_end = __END_DEFAULT_BSS;
+
+    /* Heap layout — partitioned by convention, NOT by enforcement.
+     *
+     *   [bss_end ........ kernel pceHeap zone ........ bss_end + _pceheapsize)
+     *   [bss_end + _pceheapsize ........ newlib sbrk zone ........)
+     *   [kernel-reserved high SRAM (work areas, zlib, SYSERRVBUFF, ...)]
+     *
+     * pceAppHead.bss_end (= _pceheapstart by default) is the address
+     * the kernel uses as the base of its own SRAM heap (see
+     * InitHeapAndSP / ResetHeap in sdk/sysdev/pcekn/runapp.c).  By
+     * convention, the kernel pceHeap occupies the first _pceheapsize
+     * bytes from this address; newlib's _sbrk takes over above that
+     * point and grows upward with no upper bound check.
+     *
+     * If the kernel actually allocates more than _pceheapsize bytes,
+     * it overruns into newlib's chunks; if newlib grows past the
+     * kernel's actual SRAM top (a runtime value we cannot consult at
+     * link time, since the kernel reserves the high SRAM addresses
+     * for work areas / zlib buffers / SYSERRVBUFF / etc.), it
+     * corrupts kernel state.  Both are unchecked, the same MMU-less
+     * trade-off the platform applies to stack overflow.
+     *
+     * Apps that need a larger pceHeap zone can grow it via
+     * -Wl,--defsym=_pceheapsize=N.  Apps that do not use newlib
+     * malloc at all let --gc-sections drop _sbrk and the reservation
+     * is irrelevant (kernel uses [bss_end, system_info.sram_end) as
+     * its full heap range). */
+    PROVIDE(_pceheapstart = __END_DEFAULT_BSS);
+    pce_app_bss_end = _pceheapstart;
 
     /DISCARD/ : {
         *(.note .note.*)

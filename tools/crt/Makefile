@@ -49,6 +49,11 @@ INCLUDE := -I$(SYSROOT)/include
 # newlib header source
 NEWLIB_INCLUDE := $(TOPDIR)/newlib/newlib/libc/include
 
+# newlib build sources/outputs
+NEWLIB_SRC      := $(TOPDIR)/newlib/newlib
+NEWLIB_BUILDDIR := $(BUILDDIR)/newlib
+LLVM_RANLIB     := $(TOPDIR)/build/bin/llvm-ranlib
+
 # compiler-rt builtins source
 BUILTINS_SRC  := $(TOPDIR)/llvm/compiler-rt/lib/builtins
 S1C33_ASM_DIR := $(BUILTINS_SRC)/s1c33
@@ -78,6 +83,10 @@ SDK_LIBS := \
 	$(SYSROOT)/lib/libstring.a \
 	$(SYSROOT)/lib/libctype.a
 
+NEWLIB_LIBS := \
+	$(SYSROOT)/lib/libc.a \
+	$(SYSROOT)/lib/libm.a
+
 .PHONY: all clean muslib-install regen-builtins-asm
 
 all: $(SYSROOT)/include/.newlib-stamp \
@@ -86,6 +95,7 @@ all: $(SYSROOT)/include/.newlib-stamp \
      $(SYSROOT)/lib/libpceapi.a \
      $(SYSROOT)/lib/libcxxrt.a \
      $(SYSROOT)/lib/libclang_rt.builtins-s1c33.a \
+     $(NEWLIB_LIBS) \
      $(SDK_LIBS) \
      $(SYSROOT)/lib/piece.ld \
      muslib-install
@@ -104,6 +114,7 @@ clean:
 	      $(SYSROOT)/lib/libpceapi.a \
 	      $(SYSROOT)/lib/libcxxrt.a \
 	      $(SYSROOT)/lib/libclang_rt.builtins-s1c33.a \
+	      $(NEWLIB_LIBS) \
 	      $(SDK_LIBS)
 	rm -f $(SYSROOT)/include/.newlib-stamp
 
@@ -267,9 +278,6 @@ $(PCEAPI_STUBS_DIR): | $(BUILDDIR)
 $(BUILDDIR)/version_check.o: version_check.c | $(BUILDDIR) $(SYSROOT)/include/.newlib-stamp
 	$(CLANG) $(CFLAGS_CRT) $< -o $@
 
-$(BUILDDIR)/def_vbuff.o: def_vbuff.c | $(BUILDDIR)
-	$(CLANG) $(CFLAGS_CRT) $< -o $@
-
 $(BUILDDIR)/memset.o: memset.s | $(BUILDDIR)
 	$(CLANG) $(ASFLAGS_CRT) $< -o $@
 
@@ -284,7 +292,6 @@ $(BUILDDIR)/iodef.o: iodef.s | $(BUILDDIR)
 
 UTILITY_OBJS := \
 	$(BUILDDIR)/version_check.o \
-	$(BUILDDIR)/def_vbuff.o \
 	$(BUILDDIR)/memset.o \
 	$(BUILDDIR)/memcpy.o \
 	$(BUILDDIR)/stacklen.o \
@@ -340,3 +347,71 @@ $(BUILDDIR)/ctype_table.o: ctype_table.c | $(BUILDDIR) $(SYSROOT)/include/.newli
 $(SYSROOT)/lib/libctype.a: $(SDKLIB)/ctype.lib $(BUILDDIR)/ctype_table.o
 	$(SRF2ELF) $(SDKLIB)/ctype.lib $@
 	$(LLVM_AR) q $@ $(BUILDDIR)/ctype_table.o
+
+# -----------------------------------------------------------------------
+# newlib — built from the newlib/ submodule via its own autotools.
+#
+# We configure newlib in $(NEWLIB_BUILDDIR) targeting s1c33-none-elf and
+# use the freshly-built clang as CC_FOR_TARGET.  Headers are NOT
+# installed from this path — the existing recipe above already manages
+# the sysroot include/ tree by direct copy, dropping headers that clang
+# provides (stdarg.h / stddef.h / float.h) and overlaying P/ECE-specific
+# headers.
+#
+# Configure flags chosen for the P/ECE memory budget:
+#   nano-malloc / nano-formatted-io / reent-small / lite-exit
+#   no multithread, no iconv, no wide-orient, no fseek-optimization
+#
+# The build only runs all-target-newlib; we then copy libc.a / libm.a
+# directly out of the build tree into $(SYSROOT)/lib/.
+# -----------------------------------------------------------------------
+
+NEWLIB_CONFIGURE_FLAGS := \
+    --build=x86_64-pc-linux-gnu \
+    --host=s1c33-none-elf \
+    --target=s1c33-none-elf \
+    --prefix=$(TOPDIR)/sysroot \
+    --enable-newlib-nano-malloc \
+    --enable-newlib-nano-formatted-io \
+    --enable-newlib-reent-small \
+    --disable-newlib-multithread \
+    --disable-newlib-fvwrite-in-streamio \
+    --disable-newlib-fseek-optimization \
+    --disable-newlib-wide-orient \
+    --enable-lite-exit \
+    --disable-newlib-unbuf-stream-opt \
+    --disable-newlib-iconv \
+    --enable-target-optspace
+
+# Tools the inner newlib build will use.  -ffreestanding so newlib does
+# not assume hosted libc, -fno-builtin so its memcpy/memset/etc are not
+# folded into compiler intrinsics that recurse into themselves.
+NEWLIB_CC := $(CLANG) --target=$(TARGET) -ffreestanding -fno-builtin
+
+$(NEWLIB_BUILDDIR)/Makefile: $(NEWLIB_SRC)/configure | $(BUILDDIR)
+	mkdir -p $(NEWLIB_BUILDDIR)
+	cd $(NEWLIB_BUILDDIR) && \
+	  $(NEWLIB_SRC)/configure \
+	    CC="$(NEWLIB_CC)" \
+	    AS="$(NEWLIB_CC) -c" \
+	    AR="$(LLVM_AR)" \
+	    RANLIB="$(LLVM_RANLIB)" \
+	    CC_FOR_TARGET="$(NEWLIB_CC)" \
+	    AS_FOR_TARGET="$(NEWLIB_CC) -c" \
+	    AR_FOR_TARGET="$(LLVM_AR)" \
+	    RANLIB_FOR_TARGET="$(LLVM_RANLIB)" \
+	    $(NEWLIB_CONFIGURE_FLAGS)
+
+# Build & install newlib.  We use install-target-newlib + install-target-libm
+# but redirect into a staging dir so the existing sysroot include layout is
+# not touched; only libc.a / libm.a are then copied out.
+$(NEWLIB_LIBS) &: $(NEWLIB_BUILDDIR)/Makefile
+	$(MAKE) -C $(NEWLIB_BUILDDIR)
+	@# The build dir layout puts libc.a / libm.a directly at the build root
+	@# for non-recursive newlib.  Locate and copy them.
+	@for lib in libc.a libm.a; do \
+	  src=$$(find $(NEWLIB_BUILDDIR) -maxdepth 3 -name $$lib -type f | head -1); \
+	  if [ -z "$$src" ]; then echo "ERROR: $$lib not produced" >&2; exit 1; fi; \
+	  echo "Installing $$src -> $(SYSROOT)/lib/$$lib"; \
+	  cp "$$src" $(SYSROOT)/lib/$$lib; \
+	done
