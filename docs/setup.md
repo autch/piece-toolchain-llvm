@@ -15,12 +15,16 @@
 | C/C++ コンパイラ | GCC 7 / Clang 6 以上 | LLVM・ppack のホストコンパイル |
 | Python 3 | 3.6 以上 | `srf2elf.py` による SDK 変換 |
 | zlib 開発ヘッダ | 任意 | ppack のリンク依存 |
+| iconv | GNU libc 標準 | tools/crt/ 内 UTF-8 ソースの SJIS 変換 (使う場合のみ) |
+| autoconf 2.69 / automake 1.15.1 | 厳密一致 | newlib の `configure` / `Makefile.in` 再生成 (滅多に使わない) |
 
 Debian/Ubuntu 系での一括インストール例：
 
 ```sh
 sudo apt install git cmake ninja-build g++ python3 zlib1g-dev
 ```
+
+> **autoconf/automake について**: newlib のサブモジュールには既に再生成済みの `configure` と `Makefile.in` が同梱されており、通常のビルドで autotools は呼ばれません。`newlib/newlib/configure.host` や `acinclude.m4` を編集して再生成が必要になった場合のみ、autoconf 2.69 / automake 1.15.1 を **厳密に一致するバージョン** で用意する必要があります (newer/older は互換性なし)。Debian 13 など 2.72 / 1.17 が標準の環境では `~/local/autotools/` 等にソースから入れることになります。詳細は `docs/build-howto.md` の「newlib ポートのメンテナンス」節を参照。
 
 ---
 
@@ -112,9 +116,9 @@ cd ../..
 
 P/ECE 純正開発環境の `c:/usr/piece` 以下のうち、`include/` と `lib/` を `sdk/` ディレクトリ以下にコピーすること。標準 C ヘッダは newlib サブモジュールから自動的にインストールされる。
 
-### 4-1. sysroot の一括ビルド（CRT + newlib ヘッダ + SDK ライブラリ）
+### 4-1. sysroot の一括ビルド（CRT + newlib + SDK ライブラリ）
 
-スタートアップオブジェクト・newlib ヘッダ・カーネル API スタブ・SDK ライブラリ変換・compiler-rt をすべてまとめて実行する。
+スタートアップオブジェクト・newlib (libc / libm)・カーネル API スタブ・SDK ライブラリ変換・compiler-rt をすべてまとめて実行する。
 **手順 2 の LLVM ビルドが完了している必要がある。**
 
 ```sh
@@ -123,12 +127,15 @@ make -C tools/crt
 
 以下が自動的に実行される：
 
-1. `newlib/` から標準 C ヘッダを `sysroot/s1c33-none-elf/include/` にインストール
+1. `newlib/newlib/libc/include/` から標準 C ヘッダを `sysroot/s1c33-none-elf/include/` にインストール
 2. `sdk/include/` から P/ECE 固有ヘッダ（`piece.h`、`draw.h` 等）をコピー
 3. Clang 組み込みと競合するヘッダ（`stddef.h`、`stdarg.h`、`float.h`）を除去
 4. `crt0.o`・`crti.o`・`libpceapi.a` を LLVM でビルド
 5. `libclang_rt.builtins-s1c33.a`（compiler-rt）を cmake でビルド
-6. SDK ライブラリを SRF33 → ELF に変換
+6. **newlib の `libc.a` / `libm.a` を S1C33 向けにビルド** (`build/crt/newlib/` 内で `configure` + `make`)
+7. SDK ライブラリを SRF33 → ELF に変換 (Stage A: 並列リンク用フォールバック)
+
+初回ビルドは newlib のフルビルドに数分かかる。以降は差分ビルドで `tools/crt/` 内の変更のみ再ビルドされる。
 
 以下が生成される：
 
@@ -139,7 +146,12 @@ make -C tools/crt
 | `sysroot/s1c33-none-elf/lib/libpceapi.a` | カーネル API スタブ + ユーティリティ |
 | `sysroot/s1c33-none-elf/lib/libclang_rt.builtins-s1c33.a` | compiler-rt（FP 演算・整数除算・i64 算術ランタイム） |
 | `sysroot/s1c33-none-elf/lib/libcxxrt.a` | C++ ランタイムスタブ（operator new/delete 等） |
-| `sysroot/s1c33-none-elf/lib/lib{io,lib,math,string,ctype}.a` | SDK ライブラリ（SRF33 → ELF 自動変換） |
+| `sysroot/s1c33-none-elf/lib/libc.a` | **newlib libc** (Phase 2; printf / malloc / strtod / setjmp / 等) |
+| `sysroot/s1c33-none-elf/lib/libm.a` | **newlib libm** (Phase 2; sin / cos / pow / sqrt / 等) |
+| `sysroot/s1c33-none-elf/lib/lib{io,lib,math,string,ctype}.a` | SDK ライブラリ（SRF33 → ELF 自動変換）— Stage A 中はフォールバックとして残置 |
+| `sysroot/s1c33-none-elf/lib/piece.ld` | リンカスクリプト (P/ECE メモリマップ + ヒープ配置) |
+
+> **Phase 2 (newlib 対応) について**: 既知の EPSON SDK バグ (`sin`, `strtok`, `pow`, `strtod`, `ispunct`) を持つ `lib.lib` / `math.lib` 等を newlib で置き換える段階的移行を進めています。現状は **Stage A** (newlib を優先、SDK ライブラリをフォールバック) で動作中。`-lc -lm` がリンカ順で `-lio -llib -lmath -lstring -lctype` の前に置かれ、newlib にあるシンボルは newlib が勝ちます。詳細は `docs/build-howto.md` の「リンク順序」節を参照。
 
 > **注意:** `crt0.o` は `-O1` でコンパイルされる。BSS ゼロクリアループの
 > カウンタ変数が `[SP+0]` に置かれると、カーネルが SP を bss_end に設定した場合に
@@ -164,8 +176,9 @@ ls sysroot/s1c33-none-elf/lib/
 ```
 crt0.o  crti.o  piece.ld
 libclang_rt.builtins-s1c33.a
-libcxxrt.a  libctype.a  libio.a  liblib.a
-libmath.a   libpceapi.a  libstring.a
+libc.a      libm.a                              ← newlib (Phase 2)
+libcxxrt.a  libpceapi.a
+libctype.a  libio.a  liblib.a  libmath.a  libstring.a   ← SDK fallback
 ```
 
 ---

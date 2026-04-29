@@ -122,7 +122,11 @@ Follow the phasing in DESIGN_SPEC.md §8:
 5. **Phase 5** — SRF→ELF conversion tool + linker script → can link with P/ECE SDK libraries
 6. **Phase 6** — P/ECE SDK integration tests → full application build verified
 
-**Current status**: Phase 6 complete. mini_nocrt / minimal / hello / print / jien / fpkplay / pmdplay all verified on real P/ECE hardware (2026-03). Post-Phase-6: compiler-rt Phase 1 ✅ (fp.lib/idiv.lib replaced), newlib Phase 1 ✅ (standard C headers from newlib). Next: newlib Phase 2 (replace lib.lib libc with newlib C sources).
+**Current status**: Phase 6 complete. mini_nocrt / minimal / hello / print / jien / fpkplay / pmdplay all verified on real P/ECE hardware (2026-03). Post-Phase-6:
+- compiler-rt Phase 1 ✅ (fp.lib/idiv.lib replaced)
+- newlib Phase 1 ✅ (standard C headers from newlib)
+- **newlib Phase 2 Stage A ✅ (2026-04-28)**: `libc.a` / `libm.a` built from the newlib submodule and linked ahead of EPSON SDK libs (`-lc -lm -lio -llib -lmath -lstring -lctype`); newlib's `printf` / `malloc` / `sin` / `strtod` / `strtok` now beat the buggy `lib.lib` versions. Heap layout: `_pceheapstart` / `_pceheapsize` (kernel pceHeap zone) + newlib sbrk above (no upper bound check); `_def_vbuff` aliases SYSERRVBUFF (0x13c000) so no 11 KB BSS waste per app. Linker symbols documented in `docs/piece-symbols.md`. Verified on real P/ECE hardware: pmdplay including system menu invocation (2026-04-28).
+- Next: newlib Phase 2 Stage B (drop EPSON SDK fallback after exhaustive on-hardware verification).
 
 Within each phase, write lit tests alongside the implementation. Every instruction encoding, every calling convention edge case, every relaxation pattern should have a test.
 
@@ -226,7 +230,7 @@ This is distinct from the 2-operand immediate form `op %rd, sign6/imm6` where `%
 - **Nearly all ALU instructions clobber PSR flags** — add, sub, and, or, xor, not, shifts, rotates, and even `ld` with immediates all update N/Z/V/C. Every such instruction needs `Defs = [PSR]` in TableGen. This is critical for correct instruction scheduling around conditional branches.
 - **64-bit integer runtime is incomplete in EPSON's SDK** — `__fixsfdi`, `__fixunssfdi`, `__floatdisf`, `__cmpdi2` were never implemented. compiler-rt must provide these. 64-bit args use register pairs: R12(lo)+R13(hi) for first arg, R14(lo)+R15(hi) for second.
 - **Division is expensive** — 35 instructions for a single div. Default to library call (`__divsi3`), not inline expansion, to avoid code size explosion.
-- **EPSON's C library (lib.lib) has known bugs** — sin(), strtok(), pow(), strtod(), ispunct() are broken. Replace only the buggy functions individually; do not remove lib.lib entirely as other SDK components may depend on it.
+- **EPSON's C library (lib.lib / math.lib) has known bugs** — sin(), strtok(), pow(), strtod(), ispunct() are broken in the gcc33-era SDK libs. As of newlib Phase 2 Stage A (2026-04), `-lc -lm` is linked ahead of `-lio -llib -lmath -lstring -lctype` in BareMetal.cpp, so newlib's correct implementations win for any of these symbols. EPSON SDK libs remain in the link line as fallback for symbols newlib does not provide; do not remove them until Stage B is complete.
 - **Shift/rotate instructions do NOT support ext** — Manual states "シフト・ローテート命令を除き、ext命令による即値拡張が行えます". Max shift amount is 8 bits (imm4 mapping: 0000=0, ..., 0111=7, 1xxx=8). Shift > 8 must be split into multiple instructions in ISelDAGToDAG using MachineNodes (NOT PerformDAGCombine, which gets re-combined).
 - **Class 1 memory ext displacement is UNSIGNED — negative offsets silently break** — `ext imm13 / ld.* [%rb]` zero-extends imm13. If the optimizer folds a negative offset (e.g., -2 → ext 8190), the CPU reads address `rb + 8190` instead of `rb - 2`. This caused pmdplay O1 bugs (parts not playing, loops stopping). The fix: use `immZExt13` (not `immSExt13`) in DAG patterns so negative offsets are never folded. See "ext Immediate Signedness Rules" section above.
 - **SP-relative offsets are in scaled units, not bytes** — `ld.w [%sp+imm6]`: imm6 is in word units (×4). `ld.h`: halfword units (×2). `ld.b`: byte units (×1). `add/sub %sp, imm10`: word units (×4). The byte offset from eliminateFrameIndex must be divided by the scale factor before encoding. gcc33 encodes `ld.w [%sp+0xd]` for byte offset 52 (13 words × 4).
@@ -243,9 +247,20 @@ This is distinct from the 2-operand immediate form `op %rd, sign6/imm6` where `%
 
 ## SDK Library Link Order
 
-The correct default link order (P/ECE SDK convention):
+Original P/ECE SDK convention (gcc33 era):
 ```
 crt0.o crti.o [user .o files]
 -lpceapi -lio -llib -lmath -lstring -lctype -lfp -lidiv
 ```
-Libraries not in this list (muslib etc) are not included by default.
+
+**Current actual order (BareMetal.cpp; Phase 2 Stage A, 2026-04)**:
+```
+crt0.o crti.o [user .o files]
+-lclang_rt.builtins-s1c33                 ← compiler-rt (replaces fp.lib / idiv.lib)
+--start-group
+  -lcxxrt -lpceapi
+  -lc -lm                                  ← newlib libc / libm (Phase 2)
+  -lio -llib -lmath -lstring -lctype       ← EPSON SDK fallback (drop in Stage B)
+--end-group
+```
+Libraries not in this list (muslib etc) are not included by default; apps link them explicitly via `-lmuslib` etc.

@@ -81,16 +81,32 @@ python3 tools/srf2elf/srf2elf.py sdk/lib/sprite.lib sysroot/s1c33-none-elf/lib/l
 
 **デフォルトライブラリ（正式リンク順）：**
 
+リンク順は `clang/lib/Driver/ToolChains/BareMetal.cpp` の S1C33 分岐で固定:
+```
+-lclang_rt.builtins-s1c33
+--start-group
+  -lcxxrt -lpceapi
+  -lc -lm                          ← newlib (Phase 2)
+  -lio -llib -lmath -lstring -lctype  ← EPSON SDK fallback (Stage A)
+--end-group
+```
+
+newlib (`-lc -lm`) が EPSON SDK ライブラリより先に置かれているため、両方が同名のシンボル (例: `printf`, `malloc`, `sin`) を提供する場合は **newlib が優先** されます。EPSON SDK 側はフォールバックとして残置されており、newlib に未実装のシンボル (`pceapi` 経由の特殊関数等) を埋めます。
+
 | ライブラリ | 提供元 | 主な提供シンボル |
 |---|---|---|
-| `libclang_rt.builtins-s1c33.a` | compiler-rt（LLVM ビルド） | `__addsf3`、`__divsi3` 等 FP・整数除算ランタイム |
+| `libclang_rt.builtins-s1c33.a` | compiler-rt（LLVM ビルド） | `__addsf3`、`__divsi3`、`__fixsfdi`、`__floatdisf` 等 FP・整数除算・i64 変換ランタイム |
 | `libcxxrt.a` | `tools/crt/cxxrt.c` 等（LLVM ビルド） | `operator new/delete`、`__cxa_pure_virtual` 等 C++ ランタイム |
 | `libpceapi.a` | `tools/crt/gen_pceapi.py`（LLVM ビルド） | `pceLCDTrans`、`pcePadGet` 等 カーネル API スタブ |
-| `libio.a` | `io.lib`（SRF→ELF 変換） | `printf`、`scanf`、`fopen` 等 I/O |
-| `liblib.a` | `lib.lib`（SRF→ELF 変換） | `malloc`、`atoi`、`rand` 等 標準 C ライブラリ |
-| `libmath.a` | `math.lib`（SRF→ELF 変換） | `sin`、`cos`、`sqrt` 等 数学関数 |
-| `libstring.a` | `string.lib`（SRF→ELF 変換） | `memset`、`memcpy`、`strlen`、`strcmp` 等 |
-| `libctype.a` | `ctype.lib`（SRF→ELF 変換） | `isalpha`、`isdigit`、`tolower` 等 |
+| **`libc.a`** | **newlib (`newlib/`、tools/crt/Makefile でビルド)** | **`printf`、`malloc`、`strtod`、`strtok`、`setjmp`、`atoi`、`rand` 等 ANSI C 標準** |
+| **`libm.a`** | **newlib (同上)** | **`sin`、`cos`、`pow`、`sqrt`、`atan2`、`exp`、`log`、`fabs`、`fmod` 等 数学関数** |
+| `libio.a` | `io.lib`（SRF→ELF 変換） | (Stage A フォールバック) `printf`、`scanf`、`fopen` 等 I/O |
+| `liblib.a` | `lib.lib`（SRF→ELF 変換） | (Stage A フォールバック) `malloc`、`atoi`、`rand` 等 |
+| `libmath.a` | `math.lib`（SRF→ELF 変換） | (Stage A フォールバック) `sin`、`cos`、`sqrt` 等 |
+| `libstring.a` | `string.lib`（SRF→ELF 変換） | (Stage A フォールバック) `memset`、`memcpy`、`strlen` 等 |
+| `libctype.a` | `ctype.lib`（SRF→ELF 変換） | (Stage A フォールバック) `isalpha`、`isdigit`、`tolower` 等 |
+
+> **Phase 2 newlib 移行のステージ**: 現状は **Stage A** (newlib + EPSON SDK 並列リンク、newlib 優先)。Stage B (EPSON SDK 全削除) は全アプリの実機検証完了後に予定。アプリ作者は `-lc` 経由で newlib に切り替わったことを通常意識する必要はありません — 既知の EPSON `lib.lib` バグ (sin / pow / strtod / strtok / ispunct) は自動的に newlib 版で動作します。
 
 **オプションライブラリ（明示指定のみ）：**
 
@@ -228,7 +244,7 @@ clang は自動的に以下を行う：
 - `-m elf32ls1c33` エミュレーション指定
 - `sysroot/s1c33-none-elf/lib/crt0.o` をスタートアップとして追加
 - `sysroot/s1c33-none-elf/lib/piece.ld` をデフォルトリンカースクリプトとして使用
-- `-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lio -llib -lmath -lstring -lctype --end-group` を自動リンク
+- `-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lc -lm -lio -llib -lmath -lstring -lctype --end-group` を自動リンク
 
 `-nostdlib` を指定するとスタートアップもライブラリも追加されない（手動リンク用）。
 
@@ -245,7 +261,7 @@ build/bin/ld.lld \
     -L build/lib/clang/22/lib/s1c33-unknown-none-elf \
     -lclang_rt.builtins-s1c33 \
     --start-group \
-    -lcxxrt -lpceapi -lio -llib -lmath -lstring -lctype \
+    -lcxxrt -lpceapi -lc -lm -lio -llib -lmath -lstring -lctype \
     --end-group \
     -o hello.elf
 ```
@@ -369,18 +385,21 @@ tools/ppack/ppack -e hello.elf -ohello.pex -n"Hello World"
 sysroot が構築されていないか、`--sysroot` が指定されていない。
 §1 の手順で sysroot を構築してから `--sysroot=sysroot/s1c33-none-elf` を指定する。
 
-ライブラリとシンボルの対応：
+ライブラリとシンボルの対応 (Phase 2 / Stage A 時点):
 
-| シンボル | ライブラリ |
+| シンボル | 提供元 (優先順) |
 |---|---|
 | `pceLCDTrans`, `pcePadGet` 等 | `libpceapi.a`（`pceapi.lib` から変換） |
-| `printf`, `fopen` 等 I/O | `libio.a`（`io.lib` から変換） |
-| `malloc`, `atoi`, `rand` 等 | `liblib.a`（`lib.lib` から変換） |
-| `sin`, `cos`, `sqrt` 等 | `libmath.a`（`math.lib` から変換） |
-| `memset`, `memcpy`, `strlen` 等 | `libstring.a`（`string.lib` から変換） |
-| `isalpha`, `tolower` 等 | `libctype.a`（`ctype.lib` から変換） |
-| `__addsf3`, `__mulsf3` 等（float） | `libclang_rt.builtins-s1c33.a`（compiler-rt） |
-| `__divsi3`, `__modsi3` 等（int 除算） | `libclang_rt.builtins-s1c33.a`（compiler-rt） |
+| `printf`, `sprintf`, `vfprintf` 等 stdio | **`libc.a` (newlib)** → fallback `libio.a` |
+| `malloc`, `free`, `realloc`, `calloc` | **`libc.a` (newlib nano-malloc)** → fallback `liblib.a` |
+| `atoi`, `strtol`, `strtod`, `rand` 等 | **`libc.a` (newlib)** → fallback `liblib.a` |
+| `sin`, `cos`, `pow`, `sqrt`, `atan2` 等 | **`libm.a` (newlib)** → fallback `libmath.a` |
+| `memset`, `memcpy`, `strlen`, `strcpy` 等 | **`libc.a` (newlib)** → fallback `libstring.a` |
+| `isalpha`, `tolower`, `isdigit` 等 | **`libc.a` (newlib)** → fallback `libctype.a` |
+| `setjmp`, `longjmp` | **`libc.a` (newlib `libc/machine/s1c33/`)** |
+| `_sbrk`, `_write`, `_exit` 等 syscall stub | **`libc.a` (newlib `libc/sys/s1c33/`)** |
+| `__addsf3`, `__mulsf3`, `__fixsfdi` 等（float） | `libclang_rt.builtins-s1c33.a`（compiler-rt） |
+| `__divsi3`, `__modsi3`, `__divdi3` 等（除算） | `libclang_rt.builtins-s1c33.a`（compiler-rt） |
 
 ### `mlt.w: instruction requires a CPU feature not currently enabled`
 
@@ -421,3 +440,103 @@ build/bin/llvm-objdump --mcpu=s1c33209 -d hello.elf
 （`mp->genwave(mp, ...)` 等）が正しく動作しない場合、
 `S1C33ISelLowering.cpp` の `LowerCall` に問題がある可能性がある。
 現在の実装では間接呼び出しに `call %rb` 命令が正しく選択される。
+
+### `_malloc_r` 内で alignment exception が出る、または free list が壊れる
+
+newlib のヒープ領域 (sbrk が割り当てる範囲) を超えて kernel pceHeap が
+書き込んでいる可能性がある。アプリ作者ができる調整:
+
+- `-Wl,--defsym=_pceheapsize=N` で kernel pceHeap zone のサイズを増やす
+  (デフォルト 0x2000 = 8 KB)
+- 自前の `_sbrk` を実装してリンクし、別領域でヒープを管理する
+- 詳細は `docs/piece-symbols.md` 参照
+
+### システムメニューが開けない / `pceLCDSetBuffer(_def_vbuff)` で挙動がおかしい
+
+`_def_vbuff` は piece.ld で **絶対アドレス 0x13c000 = SYSERRVBUFF** に
+alias されており、BSS 実体は持ちません。kernel の system menu / system
+error / version_check の 3 経路は同じ 4 KB 領域を時間多重で使うことを
+前提にした設計です。`_def_vbuff` を超えて書き込むコード (例: 古い SDK
+コードを移植したもので 11 KB の memset を行う) は kernel-private 領域に
+食い込みますが、その経路は app が終了する直前にしか走らないため実害は
+ありません。
+
+### P/ECE 固有のリンカシンボルを把握したい
+
+`docs/piece-symbols.md` に `_stacklen` / `_pceheapstart` / `_pceheapsize` /
+`_def_vbuff` 等、`-Wl,--defsym` で上書き可能なシンボルと役割の一覧があります。
+
+---
+
+## newlib ポートのメンテナンス
+
+通常のアプリ開発者には不要な情報。`newlib/newlib/libc/sys/s1c33/` や
+`newlib/newlib/libc/machine/s1c33/` を編集するときのみ参照する。
+
+### 既存ソースの編集 (configure.host / *.c / *.S)
+
+`newlib/newlib/libc/{machine,sys}/s1c33/` 内の C / アセンブリを編集した場合、
+通常の `make -C tools/crt` で newlib が再ビルドされる。再生成は不要。
+
+### 構造変更 (新ファイル追加 / configure.host への新エントリ等)
+
+`newlib/newlib/configure` および `newlib/newlib/Makefile.in` の再生成が必要。
+
+```sh
+# autoconf 2.69 / automake 1.15.1 が PATH にあること
+cd newlib/newlib
+autoreconf -i
+```
+
+`autoreconf` を実行するには **autoconf 2.69 と automake 1.15.1 が厳密に必要** (newlib の `../config/override.m4` がバージョン一致を強制)。Debian 13 等は標準で 2.72 / 1.17 なので、ローカルにビルドして PATH を通す:
+
+```sh
+mkdir -p ~/local/src && cd ~/local/src
+curl -sSLO https://ftp.gnu.org/gnu/autoconf/autoconf-2.69.tar.xz
+curl -sSLO https://ftp.gnu.org/gnu/automake/automake-1.15.1.tar.xz
+tar xf autoconf-2.69.tar.xz && tar xf automake-1.15.1.tar.xz
+
+# autoconf 2.69
+cd autoconf-2.69 && ./configure --prefix=$HOME/local/autotools && make && make install
+
+# automake 1.15.1 (autoconf 2.69 が PATH にあること)
+cd ../automake-1.15.1
+PATH=$HOME/local/autotools/bin:$PATH ./configure --prefix=$HOME/local/autotools
+PATH=$HOME/local/autotools/bin:$PATH make && PATH=$HOME/local/autotools/bin:$PATH make install
+
+# 以降は autoreconf 実行時に PATH を通す
+PATH=$HOME/local/autotools/bin:$PATH autoreconf -i
+```
+
+再生成後、`configure` と `Makefile.in` の差分を `git add` してコミットする (これらは newlib submodule にチェックインされる)。
+
+### S1C33 向けポート構成ファイル一覧
+
+| ファイル | 内容 |
+|---|---|
+| `newlib/newlib/configure.host` | s1c33 CPU / host エントリ (3 箇所の case 文) |
+| `newlib/newlib/libc/acinclude.m4` | `m4_foreach_w` の MACHINE / SYS_DIR リストに `s1c33` を追加 |
+| `newlib/newlib/libc/machine/Makefile.inc` | `HAVE_LIBC_MACHINE_S1C33` 条件 include |
+| `newlib/newlib/libc/sys/Makefile.inc` | `HAVE_LIBC_SYS_S1C33_DIR` 条件 include |
+| `newlib/newlib/libc/include/machine/{ieeefp,setjmp}.h` | S1C33 little-endian / `_JBLEN=6` |
+| `newlib/newlib/libc/machine/s1c33/{setjmp,longjmp}.S` | setjmp / longjmp 実装 (S5U1C33000C ABI) |
+| `newlib/newlib/libc/machine/s1c33/Makefile.inc` | machine ソース登録 |
+| `newlib/newlib/libc/sys/s1c33/{syscalls,sbrk,_exit,write}.c` | POSIX syscall スタブ |
+| `newlib/newlib/libc/sys/s1c33/Makefile.inc` | sys ソース登録 |
+| `newlib/config.sub` | `s1c33` を CPU として認識させる行 |
+
+### tools/crt/ で日本語文字列を扱うソースを足したい場合
+
+clang は `-fexec-charset=` を実装上無視する (`InitPreprocessor.cpp` の FIXME 参照) ため、UTF-8 ソース → SJIS 実行バイト列の自動変換はできない。代わりに **iconv パイプを Makefile に挟む** パターンを使う:
+
+```make
+$(BUILDDIR)/foo.sjis.c: foo.c | $(BUILDDIR)
+	iconv -f UTF-8 -t CP932 $< -o $@
+
+$(BUILDDIR)/foo.o: $(BUILDDIR)/foo.sjis.c | $(BUILDDIR)
+	$(CLANG) $(CFLAGS_CRT) -Wno-invalid-source-encoding $< -o $@
+```
+
+CP932 を指定するのは、SHIFT_JIS 厳密版だと em dash (`—`) や `〜` 等の MS 拡張文字を弾くため。CP932 はそれらを SJIS 拡張領域に変換する。
+
+または既存の慣行どおり **ソースを Shift_JIS で直接保存** することもできる (例: `tools/crt/version_check.c`)。clang は SJIS を invalid UTF-8 とみなして警告を出すが、string literal の raw バイトとして通すため runtime 動作は正しい。`-Wno-invalid-source-encoding` で警告抑制。`CLAUDE.md` の "Source File Encoding" 節も参照。
