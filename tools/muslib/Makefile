@@ -1,5 +1,7 @@
 include ../../llvm-c33.makefile
 
+CFLAGS := -O2 -DFASTCODE $(CFLAGS)
+
 LIBOBJS = mus.o musfast.o seq.o exp12.o wavetable.o instdef.o
 INSTOBJS =\
 	wave/i_BD909.o\
@@ -39,3 +41,4 @@ $(SYSROOT)/include/musdef.h: musdef.h
 	cp $< $@
 $(SYSROOT)/include/muslib.h: muslib.h
 	cp $< $@
+

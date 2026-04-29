@@ -3,6 +3,7 @@
 // on:   2026-04-04 19:22:28
 // Do not edit — re-run asm33conv to regenerate.
 ; ----------------------------------------------------------
+	.section .fastrun,  "ax", @progbits
 	.global	MakeWaveLP_fast
 
 MakeWaveLP_fast:

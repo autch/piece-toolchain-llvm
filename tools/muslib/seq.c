@@ -16,9 +16,9 @@
 //
 // Comments:
 //
-// PIECE �W�� ���y�h���C�o�[
+// PIECE 標準 音楽ドライバー
 //
-// �V�[�P���T�[
+// シーケンサー
 //
 //  v1.00 2001.11.09 MIO.H
 //
@@ -95,9 +95,9 @@ void StartSeq( unsigned char *seqptr )
 		SetInst( &psw->mdwk, 0 );
 		SetVol( &psw->mdwk, 127 - i*16 );
 		SetEnv( &psw->mdwk, 255, 0, 0, 0);
-		// yui: �r�u���[�g������
+		// yui: エンベロープ初期化
 		SetVib( &psw->mdwk, 0, 0, 0, 0);
-		psw->dtn = 0;			// yui: �f�`���[��������
+		psw->dtn = 0;			// yui: デチューン初期化
 	}
 	for ( ; i < MAXSEQ; i++ ) {
 		SEQWK *psw = seqwk + i;

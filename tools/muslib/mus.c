@@ -1,5 +1,3 @@
-#pragma clang optimize off
-
 /////////////////////////////////////////////////////////////////////////////
 //
 //             /
@@ -17,13 +15,14 @@
 //
 // Comments:
 //
-// PIECE �W�� ���y�h���C�o�[
+// PIECE 標準 音楽ドライバー
 //
-// �����h���C�o�[
+// 音源ドライバー
 //
 //  v1.00 2001.11.09 MIO.H
 //
 
+#pragma clang section text=".fastrun" data=".fastdata" bss=".fastbss"
 
 
 #include <string.h>
@@ -56,8 +55,8 @@ unsigned char music_wch;
 
 
 #ifndef FASTCODE
-// ���ꂪ�g�`���������̊j�ł��B(���A�Z���u���E�o�[�W��������)
-// �g�`�ǂݏo��
+// これが波形合成処理の核です。(→アセンブラ・バージョンあり)
+// 波形読み出し
 //
 void MakeWaveLP( MDEVICE *mp, signed short *p, signed long vv, int cnt )
 {
@@ -102,7 +101,7 @@ void MakeWaveNL( MDEVICE *mp, signed short *p, signed long vv, int cnt )
 	mp->freqwk = cc;
 }
 
-// ��`�g�ɍœK��
+// 矩形波に最適化
 //
 void MakeWaveSQR( MDEVICE *mp, signed short *p, signed long vv, int cnt )
 {
@@ -115,7 +114,7 @@ void MakeWaveSQR( MDEVICE *mp, signed short *p, signed long vv, int cnt )
 	mp->freqwk = cc;
 }
 
-// �̂�����g�ɍœK��
+// のこぎり波に最適化
 //
 void MakeWaveSAW( MDEVICE *mp, signed short *p, signed long vv, int cnt )
 {
@@ -128,7 +127,7 @@ void MakeWaveSAW( MDEVICE *mp, signed short *p, signed long vv, int cnt )
 	mp->freqwk = cc;
 }
 
-// �O�p�g�ɍœK��
+// 三角波に最適化
 //
 void MakeWaveTRI( MDEVICE *mp, signed short *p, signed long vv, int cnt )
 {
@@ -157,7 +156,7 @@ void MakeWaveTRI_fast( MDEVICE *mp, signed short *p, signed long vv, int cnt );
 #endif
 
 // --------------------------------
-// �G���x���[�v�E�W�F�l���[�^�[
+// エンベロープ・ジェネレーター
 
 #define VOLS 1
 
@@ -231,7 +230,7 @@ void SetEnv( MDEVICE *mp, int ar, int dr, int sl, int sr )
 }
 
 // --------------------------------
-// �r�u���[�g�E�W�F�l���[�^�[
+// ビブラート・ジェネレーター
 
 #define T1CONST 0x4000
 
@@ -472,6 +471,4 @@ void StopMusic( void )
 	if ( !finish ) finish = 1;
 }
 
-
-
-
+#pragma clang section text="" data="" bss=""
