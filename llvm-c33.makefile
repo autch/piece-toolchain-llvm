@@ -4,10 +4,10 @@ SDK = $(C33HOME)/sdk
 BIN = $(C33HOME)/build/bin
 SYSROOT = $(C33HOME)/sysroot/s1c33-none-elf
 
-ifdef NO_LTO
-    LTOFLAGS =
+ifdef LTO
+    LTOFLAGS = -flto=full -ffat-lto-objects
 else
-    LTOFLAGS = -flto=full
+    LTOFLAGS =
 endif
 
 CC = $(BIN)/clang --sysroot=$(SYSROOT)
