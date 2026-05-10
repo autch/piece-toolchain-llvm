@@ -87,7 +87,7 @@ NEWLIB_LIBS := \
 	$(SYSROOT)/lib/libc.a \
 	$(SYSROOT)/lib/libm.a
 
-.PHONY: all clean muslib-install regen-builtins-asm
+.PHONY: all clean muslib-install pceshim-install regen-builtins-asm
 
 all: $(SYSROOT)/include/.newlib-stamp \
      $(SYSROOT)/lib/crt0.o \
@@ -98,11 +98,18 @@ all: $(SYSROOT)/include/.newlib-stamp \
      $(NEWLIB_LIBS) \
      $(SDK_LIBS) \
      $(SYSROOT)/lib/piece.ld \
-     muslib-install
+     muslib-install \
+     pceshim-install
 
 # muslib is built from source in tools/muslib/ (not converted from SDK SRF).
 muslib-install:
 	$(MAKE) -C $(TOPDIR)/tools/muslib install
+
+# pceshim provides tiny replacements (rand/srand, __assert_func) that
+# shadow the newlib versions and break their dependency cascade into
+# malloc and stdio.  See tools/pceshim/ for details.
+pceshim-install:
+	$(MAKE) -C $(TOPDIR)/tools/pceshim install
 
 $(SYSROOT)/lib/piece.ld: $(TOPDIR)/tools/piece.ld
 	cp $< $@
@@ -112,11 +119,13 @@ clean:
 	rm -f $(SYSROOT)/lib/crt0.o \
 	      $(SYSROOT)/lib/crti.o \
 	      $(SYSROOT)/lib/libpceapi.a \
+	      $(SYSROOT)/lib/libpceshim.a \
 	      $(SYSROOT)/lib/libcxxrt.a \
 	      $(SYSROOT)/lib/libclang_rt.builtins-s1c33.a \
 	      $(NEWLIB_LIBS) \
 	      $(SDK_LIBS)
 	rm -f $(SYSROOT)/include/.newlib-stamp
+	$(MAKE) -C $(TOPDIR)/tools/pceshim clean
 
 $(BUILDDIR):
 	mkdir -p $@
