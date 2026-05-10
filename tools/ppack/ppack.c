@@ -13,6 +13,10 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdint.h>
+#include <errno.h>
+#ifdef PPACK_HAVE_ICONV
+#  include <iconv.h>
+#endif
 
 /* -------------------------------------------------------------------------
  * ELF32 structures (little-endian, S1C33 = EM_SE_C33 = 107)
@@ -124,10 +128,70 @@ static char usage[] =
     "options:\n"
     "   -v      : verbose\n"
     "   -bhhhh  : binary mode (raw binary at address hhhh)\n"
-    "   -n<name>: caption (up to 24 chars)\n"
+    "   -n<name>: caption, raw bytes (up to 24 bytes; pass SJIS directly)\n"
+#ifdef PPACK_HAVE_ICONV
+    "   -N<name>: caption, UTF-8 input transcoded to CP932 (up to 24 bytes)\n"
+#endif
     "   -i<file>: icon image file (.pid, 256 bytes)\n"
     "   -k      : key wait\n"
     ;
+
+#ifdef PPACK_HAVE_ICONV
+/* -------------------------------------------------------------------------
+ * utf8_to_cp932 — transcode caption from UTF-8 to CP932 (Shift_JIS).
+ *
+ * The pex file stores the caption as raw CP932 bytes (the BIOS font renderer
+ * reads them directly without transcoding).  Writing those bytes literally in
+ * a Makefile forces the Makefile itself to be saved as SJIS, which mangles
+ * the caption when the file is viewed in a UTF-8 terminal.  This helper lets
+ * callers pass UTF-8 on the command line and have ppack convert it.
+ *
+ * Only compiled when iconv is available (POSIX systems, MinGW/MSYS2 with
+ * libiconv).  On platforms without iconv (e.g. plain MSVC builds), -N is
+ * disabled and users should pass raw CP932 bytes via -n instead.
+ *
+ * Returns 0 on success.  On failure, prints a diagnostic and returns -1.
+ * dst is always NUL-terminated on success.
+ * ------------------------------------------------------------------------- */
+
+static int utf8_to_cp932(const char *src, char *dst, size_t dst_size)
+{
+    iconv_t cd = iconv_open("CP932", "UTF-8");
+    if (cd == (iconv_t)-1) {
+        fprintf(stderr, "ppack: iconv_open(CP932<-UTF-8) failed: %s\n",
+                strerror(errno));
+        return -1;
+    }
+
+    char *inbuf = (char *)src;
+    size_t inbytesleft = strlen(src);
+    char *outbuf = dst;
+    size_t outbytesleft = dst_size - 1;  /* leave room for NUL */
+
+    size_t r = iconv(cd, &inbuf, &inbytesleft, &outbuf, &outbytesleft);
+    int saved_errno = errno;
+    iconv_close(cd);
+
+    if (r == (size_t)-1) {
+        if (saved_errno == E2BIG) {
+            fprintf(stderr,
+                "ppack: caption too long after CP932 conversion (limit %zu bytes)\n",
+                dst_size - 1);
+        } else if (saved_errno == EILSEQ) {
+            fprintf(stderr,
+                "ppack: caption contains a character that cannot be represented in CP932\n");
+        } else if (saved_errno == EINVAL) {
+            fprintf(stderr, "ppack: caption ends with an incomplete UTF-8 sequence\n");
+        } else {
+            fprintf(stderr, "ppack: iconv failed: %s\n", strerror(saved_errno));
+        }
+        return -1;
+    }
+
+    *outbuf = '\0';
+    return 0;
+}
+#endif /* PPACK_HAVE_ICONV */
 
 /* -------------------------------------------------------------------------
  * readfile_elf — load PT_LOAD segments into databuff[] by LMA
@@ -402,6 +466,18 @@ void params(char *p)
             break;
         case 'n':
             strncpy(FileName, p + 2, sizeof(FileName) - 1);
+            FileName[sizeof(FileName) - 1] = '\0';
+            break;
+        case 'N':
+#ifdef PPACK_HAVE_ICONV
+            if (utf8_to_cp932(p + 2, FileName, sizeof(FileName)) != 0)
+                exit(1);
+#else
+            fprintf(stderr,
+                "ppack: -N requires iconv (not available in this build).\n"
+                "       Use -n with raw CP932 bytes instead.\n");
+            exit(1);
+#endif
             break;
         case 'i':
             strncpy(IconName, p + 2, sizeof(IconName) - 1);
