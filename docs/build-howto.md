@@ -66,7 +66,11 @@ make -C tools/crt
 7. SDK ライブラリを SRF33 → ELF に変換（Stage A フォールバック）
 8. `libmuslib.a`（`tools/muslib/` のソースからビルド）と `libpceshim.a`（newlib シム）をビルド
 
-音楽ライブラリ `libmuslib.a` は `tools/muslib/` のソースから LLVM でビルドされ、この `make -C tools/crt` で sysroot に自動インストールされる（旧来の `srf2elf` による SDK SRF からの変換は廃止）。
+音楽ライブラリ `libmuslib.a` は `tools/muslib/` のソースから LLVM でビルドされ、この `make -C tools/crt` で sysroot に自動インストールされる（旧来の `srf2elf` による SDK SRF からの変換は廃止）。スプライトライブラリ `libsprite.a` は自動変換対象外なので、使う場合は個別に変換する：
+
+```sh
+python3 tools/srf2elf/srf2elf.py sdk/lib/sprite.lib sysroot/s1c33-none-elf/lib/libsprite.a
+```
 
 ### sysroot に含まれるファイルの内容
 
@@ -111,7 +115,8 @@ newlib (`-lc -lm`) が EPSON SDK ライブラリより先に置かれている�
 
 | ライブラリ | ビルド元 | 使い方 |
 |---|---|---|
-| `libmuslib.a` | `tools/muslib/`（ソースから LLVM ビルド） | 音楽再生ライブラリ（`-lmuslib` で指定） |
+| `libmuslib.a` | `tools/muslib/`（ソースから LLVM ビルド、`make` で自動） | 音楽再生ライブラリ（`-lmuslib` で指定） |
+| `libsprite.a` | `sdk/lib/sprite.lib`（`srf2elf` で手動変換） | スプライト描画（`-lsprite` で指定） |
 
 ---
 

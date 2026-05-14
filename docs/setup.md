@@ -159,7 +159,15 @@ make -C tools/crt
 > ループが自分のカウンタを上書きしてしまうため、`-O0` でのビルドは禁止。
 > Makefile の `CFLAGS_CRT` は `-O1` が設定されており、変更しないこと。
 
-音楽ライブラリ `libmuslib.a` は `tools/muslib/` のソースから LLVM でビルドされ、上記 `make -C tools/crt` で sysroot に自動インストールされる（旧来の `srf2elf` による SDK SRF からの変換は廃止）。アプリ側は必要に応じて `-lmuslib` を明示指定する。
+音楽ライブラリ `libmuslib.a` は `tools/muslib/` のソースから LLVM でビルドされ、上記 `make -C tools/crt` で sysroot に自動インストールされる（旧来の `srf2elf` による SDK SRF からの変換は廃止）。
+
+スプライトライブラリ `libsprite.a` は自動変換対象外。使用する場合は個別に変換する：
+
+```sh
+python3 tools/srf2elf/srf2elf.py sdk/lib/sprite.lib sysroot/s1c33-none-elf/lib/libsprite.a
+```
+
+どちらもアプリ側で `-lmuslib` / `-lsprite` を明示指定してリンクする。
 
 ### sysroot 完成後の確認
 
