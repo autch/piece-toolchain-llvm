@@ -335,20 +335,44 @@ DataLayout文字列: `e-m:e-p:32:32-i1:8-i8:8-i16:16-i32:32-i64:32-f32:32-f64:32
 - 最後の名前付き引数＋可変引数がスタック上に連続配置されているため、可変引数領域のためのレジスタスピル処理は不要
 - `va_start`は最後の固定引数のスタックアドレスから `_SIZEOF(lastparm)` 分進めたポインタを返す
 
-**根拠（gcc33 -O0 出力から確認）:**
+**根拠①（gcc33 -O0 出力、名前付き引数が1個＝退化ケース）:**
+
+`pceFontPrintf(const char *fmt, ...)` は名前付き引数が `fmt` の1個だけ。「最後の名前付き引数」＝唯一の名前付き引数なので、結果的に全引数がスタックに乗る:
 
 ```
 ; pceFontPrintf("Hello, %s! %d", "Alice", 5) の呼び出し
-sub  %sp, 0x3          ; 3ワード = 12バイト確保
-xld.w %r10, __LC0      ; format string
-xld.w [%sp+0], %r10    ; 第1引数 → スタック（R12ではない！）
-xld.w %r10, __LC1      ; "Alice"
-xld.w [%sp+4], %r10    ; 第2引数 → スタック（R13ではない！）
-xld.w %r10, 0x5        ; 5
-xld.w [%sp+8], %r10    ; 第3引数 → スタック（R14ではない！）
+sub   %sp, 0x3        ; 3ワード = 12バイト確保
+xld.w %r10, __LC0
+xld.w [%sp+0], %r10   ; fmt（最後の名前付き引数）→ スタック
+xld.w %r10, __LC1
+xld.w [%sp+4], %r10   ; 可変引数 "Alice" → スタック
+xld.w %r10, 0x5
+xld.w [%sp+8], %r10   ; 可変引数 5 → スタック
 xcall pceFontPrintf
-add  %sp, 0x3          ; スタック復帰
+add   %sp, 0x3        ; スタック復帰
 ```
+
+**根拠②（本バックエンド出力、名前付き引数が2個＝本来の分割）:**
+
+`sprintf(char *buf, const char *fmt, ...)` では `buf` は「最後の名前付き引数」ではないので **R12 に残り**、`fmt`（最後の名前付き引数）と可変引数だけがスタックに乗る。以下は `sprintf(buf, fmt, x)` を呼ぶ関数 `demo(int x, char *buf)` の出力（入口で x=R12, buf=R13）:
+
+```
+demo:
+    sub   %sp, 2          ; 2ワード = 8バイト確保（fmt + 可変引数 x）
+    ld.w  [%sp+1], %r12   ; 可変引数 x（R12 にあった）→ [%sp+1]
+    ext   .L.str@h
+    ext   .L.str@m
+    ld.w  %r4, .L.str@l
+    ld.w  %r12, %r13      ; buf（最初の名前付き引数）→ R12 に残す
+    ld.w  [%sp+0], %r4    ; fmt（最後の名前付き引数）→ [%sp+0]
+    call  sprintf
+    add   %sp, 2
+    ret
+```
+
+（`ld.w [%sp+N]` の N はワード単位なので `[%sp+1]` はバイトオフセット4。`fmt` と `x` がスタック上で連続する。）
+
+旧実装の「全引数スタック渡し」は `printf` のような退化ケースでだけ偶然正しく、`sprintf` では `buf` までスタックに積んでしまい、gcc33 ビルドの SDK/カーネルの `sprintf`（`buf` を R12 から読む）と食い違って文字列が壊れていた。
 
 **`stdarg.h` の実装（SDK実物より）:**
 
