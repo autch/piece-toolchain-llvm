@@ -22,9 +22,6 @@
 //  v1.00 2001.11.09 MIO.H
 //
 
-#pragma clang section text=".fastrun" data=".fastdata" bss=".fastbss"
-
-
 #include <string.h>
 #ifdef _WIN32
 #include "musdefwin.h"
@@ -470,5 +467,3 @@ void StopMusic( void )
 {
 	if ( !finish ) finish = 1;
 }
-
-#pragma clang section text="" data="" bss=""

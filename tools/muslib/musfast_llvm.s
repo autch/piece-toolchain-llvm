@@ -1,9 +1,8 @@
 // This file was automatically converted by asm33conv.py
 // from: musfast.s
-// on:   2026-04-04 19:22:28
+// on:   2026-05-14 23:10:24
 // Do not edit — re-run asm33conv to regenerate.
 ; ----------------------------------------------------------
-	.section .fastrun,  "ax", @progbits
 	.global	MakeWaveLP_fast
 
 MakeWaveLP_fast:

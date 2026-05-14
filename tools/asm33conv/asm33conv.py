@@ -310,7 +310,7 @@ def main():
                     help='出力ファイル (省略時は標準出力)')
     args = ap.parse_args()
 
-    with open(args.input, encoding='cp932', errors='replace') as f:
+    with open(args.input, encoding='utf-8', errors='replace') as f:
         lines = f.readlines()
 
     import datetime
