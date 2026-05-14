@@ -433,6 +433,27 @@ EPSON マニュアル §6.5.4 および gcc33 `draw.o` の逆アセンブルに�
 incoming スタック領域への FrameIndex ポインタを渡すよう修正（caller/callee
 対称）。
 
+### byval 構造体フィールド0のロードが `[%sp+0]` に化ける（修正済み）
+
+**影響:** byval 構造体を値渡しで受け取り、フィールド0をそのまま読みつつ
+構造体アドレスもレジスタ化する関数（odemaru の `PDW_DrawBmp` 等）。
+
+**原因:** 素の `load (frameindex)` は Pat により SP 相対の `LDW_sp` 系に
+選択されるが、これは frame index が `(Target)FrameIndex` のままの場合のみ
+正しい。同じ frame index が値としても使われる（後続フィールドを GEP で
+参照する等）と `Select(ISD::FrameIndex)` が `ADJFI` でレジスタに実体化し、
+`ReplaceNode(FI, ADJFI)` が `LDW_sp` の即値スロットに ADJFI レジスタを
+差し込む。`ld.w %rd, [%sp+%rN]` という不正命令になり、エンコーダが
+`[%sp+0]` に縮退して未初期化スロットを読む。odemaru では `dobj.src`
+（byval 構造体フィールド0）が奇数ポインタになり、カーネル
+`pceLCDDrawObject` 内のハーフワード読みでアドレス不整例外。
+
+**対処:** `S1C33ISelDAGToDAG.cpp` の `Select(ISD::FrameIndex)` で、ADJFI
+を生成する際に選択済みの `*_sp` ユーザを集め、それぞれを register-indirect
+の `*_ri` 形式（`spToRiOpcode` マップ）に作り直す。use 走査ループの early
+break も廃止し全 use を見るようにした。`byval-struct.ll` の
+`recv_byval_large` で検証。
+
 ### 単一要素構造体のレジスタ渡し（実装済み）
 
 **影響:** 単一要素・32ビット以内の構造体を値渡しする全関数呼び出し。
