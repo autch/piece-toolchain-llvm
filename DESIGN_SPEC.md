@@ -385,7 +385,11 @@ struct _foo { long long a; };    // → スタック渡し（マニュアルど�
 
 さらに、8ビット/16ビット構造体がレジスタ渡しされる場合、値はレジスタの**上位ビット側に詰めて格納**される（リトルエンディアンでは通常不要な配置で、MIPSビッグエンディアンのコード起源と推測される）。
 
-**LLVM実装:** マニュアル記載どおり全構造体スタック渡しで実装済み（`LowerCall` で byval 引数を CC 分析から除外し、スタック上の outgoing arg 領域に直接ストア）。gcc33 の `draw.o` 逆アセで実動作を確認。小構造体のレジスタ渡し最適化は未実装（SDK互換テストで問題なし）。
+**LLVM実装:** gcc33 の規約どおり実装済み。
+
+- **複数要素・union・32ビット超の構造体:** 全スタック渡し。`LowerCall` で byval 引数を CC 分析から除外しスタック上の outgoing arg 領域へ直接ストア、`LowerFormalArguments` でも同様に byval 引数を CC から除外し incoming スタック領域への FrameIndex ポインタを渡す（caller/callee 対称）。
+- **1要素・32ビット以内の構造体:** clang の `S1C33ABIInfo`（`clang/lib/CodeGen/Targets/S1C33.cpp`）が `isSingleElementStruct` で検出し、要素幅の整数（i8/i16/i32）へ coerce、`inreg` 属性を付与してレジスタ渡しにする。`inreg` は通常の i8/i16 引数（必ず sext/zext を伴う）と coerce 済み構造体を区別するシグナルで、バックエンドはこれを見て 8/16ビット形を上位ビットへシフト詰めする（caller 側 `sll`、callee 側 `srl`）。32ビット形はシフト不要でそのまま R12。
+- gcc33 の `draw.o` 逆アセおよび `byval-struct.ll` / `single-element-struct.c` の lit テストで検証。
 
 ---
 
