@@ -134,6 +134,7 @@ make -C tools/crt
 5. `libclang_rt.builtins-s1c33.a`（compiler-rt）を cmake でビルド
 6. **newlib の `libc.a` / `libm.a` を S1C33 向けにビルド** (`build/crt/newlib/` 内で `configure` + `make`)
 7. SDK ライブラリを SRF33 → ELF に変換 (Stage A: 並列リンク用フォールバック)
+8. `libmuslib.a`（音楽ライブラリ、`tools/muslib/` のソースからビルド）と `libpceshim.a`（newlib の `rand` / `__assert_func` を小型版で上書きするシム）をビルド・インストール
 
 初回ビルドは newlib のフルビルドに数分かかる。以降は差分ビルドで `tools/crt/` 内の変更のみ再ビルドされる。
 
@@ -158,12 +159,7 @@ make -C tools/crt
 > ループが自分のカウンタを上書きしてしまうため、`-O0` でのビルドは禁止。
 > Makefile の `CFLAGS_CRT` は `-O1` が設定されており、変更しないこと。
 
-音楽・スプライトライブラリは自動変換対象外。使用する場合は個別に変換する：
-
-```sh
-python3 tools/srf2elf/srf2elf.py sdk/lib/muslib.lib sysroot/s1c33-none-elf/lib/libmuslib.a
-python3 tools/srf2elf/srf2elf.py sdk/lib/sprite.lib sysroot/s1c33-none-elf/lib/libsprite.a
-```
+音楽ライブラリ `libmuslib.a` は `tools/muslib/` のソースから LLVM でビルドされ、上記 `make -C tools/crt` で sysroot に自動インストールされる（旧来の `srf2elf` による SDK SRF からの変換は廃止）。アプリ側は必要に応じて `-lmuslib` を明示指定する。
 
 ### sysroot 完成後の確認
 
@@ -177,7 +173,8 @@ ls sysroot/s1c33-none-elf/lib/
 crt0.o  crti.o  piece.ld
 libclang_rt.builtins-s1c33.a
 libc.a      libm.a                              ← newlib (Phase 2)
-libcxxrt.a  libpceapi.a
+libcxxrt.a  libpceapi.a  libpceshim.a
+libmuslib.a                                     ← 音楽ライブラリ (-lmuslib で明示指定)
 libctype.a  libio.a  liblib.a  libmath.a  libstring.a   ← SDK fallback
 ```
 
@@ -185,10 +182,10 @@ libctype.a  libio.a  liblib.a  libmath.a  libstring.a   ← SDK fallback
 
 ## 5. 動作確認
 
-`hello/` にサンプルアプリが用意されている。
+サンプルアプリは `app/` 以下に集約されている（`app/hello/`、`app/jien/`、`app/pmdplay/` など）。
 
 ```sh
-cd hello
+cd app/hello
 make
 ```
 

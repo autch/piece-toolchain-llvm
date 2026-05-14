@@ -37,9 +37,10 @@ llvm-c33/
 │           └── libctype.a                    文字種判別
 ├── tools/
 │   ├── piece.ld        リンカースクリプト（sysroot へコピー済み）
-│   ├── ppack/          ppack ツール
+│   ├── ppack/          ppack ツール（ELF → .pex パッケージャ）
+│   ├── muslib/         音楽ライブラリ（ソースからビルド）
 │   └── srf2elf/        SRF→ELF 変換ツール
-└── hello/              サンプルアプリ
+└── app/                サンプルアプリ（hello, jien, pmdplay, BlackWings, ...）
 ```
 
 ---
@@ -60,15 +61,12 @@ make -C tools/crt
 2. P/ECE 固有ヘッダ（`piece.h`、`draw.h` 等）を `sdk/include/` からコピー
 3. Clang 組み込みと競合するヘッダ（`stddef.h`、`stdarg.h`、`float.h`）を除去
 4. `crt0.o`・`crti.o`・`libpceapi.a` を LLVM でビルド
-5. SDK ライブラリを SRF33 → ELF に変換
-6. `libclang_rt.builtins-s1c33.a`（compiler-rt）を cmake でビルド
+5. `libclang_rt.builtins-s1c33.a`（compiler-rt）を cmake でビルド
+6. newlib の `libc.a` / `libm.a` を S1C33 向けにビルド
+7. SDK ライブラリを SRF33 → ELF に変換（Stage A フォールバック）
+8. `libmuslib.a`（`tools/muslib/` のソースからビルド）と `libpceshim.a`（newlib シム）をビルド
 
-オプションライブラリ（音楽・スプライト）は個別に変換する：
-
-```sh
-python3 tools/srf2elf/srf2elf.py sdk/lib/muslib.lib sysroot/s1c33-none-elf/lib/libmuslib.a
-python3 tools/srf2elf/srf2elf.py sdk/lib/sprite.lib sysroot/s1c33-none-elf/lib/libsprite.a
-```
+音楽ライブラリ `libmuslib.a` は `tools/muslib/` のソースから LLVM でビルドされ、この `make -C tools/crt` で sysroot に自動インストールされる（旧来の `srf2elf` による SDK SRF からの変換は廃止）。
 
 ### sysroot に含まれるファイルの内容
 
@@ -85,19 +83,20 @@ python3 tools/srf2elf/srf2elf.py sdk/lib/sprite.lib sysroot/s1c33-none-elf/lib/l
 ```
 -lclang_rt.builtins-s1c33
 --start-group
-  -lcxxrt -lpceapi
+  -lcxxrt -lpceapi -lpceshim
   -lc -lm                          ← newlib (Phase 2)
   -lio -llib -lmath -lstring -lctype  ← EPSON SDK fallback (Stage A)
 --end-group
 ```
 
-newlib (`-lc -lm`) が EPSON SDK ライブラリより先に置かれているため、両方が同名のシンボル (例: `printf`, `malloc`, `sin`) を提供する場合は **newlib が優先** されます。EPSON SDK 側はフォールバックとして残置されており、newlib に未実装のシンボル (`pceapi` 経由の特殊関数等) を埋めます。
+newlib (`-lc -lm`) が EPSON SDK ライブラリより先に置かれているため、両方が同名のシンボル (例: `printf`, `malloc`, `sin`) を提供する場合は **newlib が優先** されます。EPSON SDK 側はフォールバックとして残置されており、newlib に未実装のシンボル (`pceapi` 経由の特殊関数等) を埋めます。`libpceshim.a` は `-lc` の前に置かれ、newlib の `rand` / `srand` / `__assert_func` を小型の単一スレッド版で上書きしてバイナリサイズを削減します。
 
 | ライブラリ | 提供元 | 主な提供シンボル |
 |---|---|---|
 | `libclang_rt.builtins-s1c33.a` | compiler-rt（LLVM ビルド） | `__addsf3`、`__divsi3`、`__fixsfdi`、`__floatdisf` 等 FP・整数除算・i64 変換ランタイム |
 | `libcxxrt.a` | `tools/crt/cxxrt.c` 等（LLVM ビルド） | `operator new/delete`、`__cxa_pure_virtual` 等 C++ ランタイム |
 | `libpceapi.a` | `tools/crt/gen_pceapi.py`（LLVM ビルド） | `pceLCDTrans`、`pcePadGet` 等 カーネル API スタブ |
+| `libpceshim.a` | `tools/pceshim/`（LLVM ビルド） | newlib の `rand` / `srand` / `__assert_func` を小型の単一スレッド版で上書き（バイナリ縮小用シム） |
 | **`libc.a`** | **newlib (`newlib/`、tools/crt/Makefile でビルド)** | **`printf`、`malloc`、`strtod`、`strtok`、`setjmp`、`atoi`、`rand` 等 ANSI C 標準** |
 | **`libm.a`** | **newlib (同上)** | **`sin`、`cos`、`pow`、`sqrt`、`atan2`、`exp`、`log`、`fabs`、`fmod` 等 数学関数** |
 | `libio.a` | `io.lib`（SRF→ELF 変換） | (Stage A フォールバック) `printf`、`scanf`、`fopen` 等 I/O |
@@ -110,10 +109,9 @@ newlib (`-lc -lm`) が EPSON SDK ライブラリより先に置かれている�
 
 **オプションライブラリ（明示指定のみ）：**
 
-| ライブラリ | 変換元 | 使い方 |
+| ライブラリ | ビルド元 | 使い方 |
 |---|---|---|
-| `libmuslib.a` | `muslib.lib` | 音楽再生ライブラリ（`-lmuslib` で指定） |
-| `libsprite.a` | `sprite.lib` | スプライト描画（`-lsprite` で指定） |
+| `libmuslib.a` | `tools/muslib/`（ソースから LLVM ビルド） | 音楽再生ライブラリ（`-lmuslib` で指定） |
 
 ---
 
@@ -244,7 +242,7 @@ clang は自動的に以下を行う：
 - `-m elf32ls1c33` エミュレーション指定
 - `sysroot/s1c33-none-elf/lib/crt0.o` をスタートアップとして追加
 - `sysroot/s1c33-none-elf/lib/piece.ld` をデフォルトリンカースクリプトとして使用
-- `-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lc -lm -lio -llib -lmath -lstring -lctype --end-group` を自動リンク
+- `-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lpceshim -lc -lm -lio -llib -lmath -lstring -lctype --end-group` を自動リンク
 
 `-nostdlib` を指定するとスタートアップもライブラリも追加されない（手動リンク用）。
 
@@ -261,7 +259,7 @@ build/bin/ld.lld \
     -L build/lib/clang/22/lib/s1c33-unknown-none-elf \
     -lclang_rt.builtins-s1c33 \
     --start-group \
-    -lcxxrt -lpceapi -lc -lm -lio -llib -lmath -lstring -lctype \
+    -lcxxrt -lpceapi -lpceshim -lc -lm -lio -llib -lmath -lstring -lctype \
     --end-group \
     -o hello.elf
 ```
@@ -336,8 +334,11 @@ tools/ppack/ppack -e hello.elf -ohello.pex -n"Hello World" -iicon.pid
 |---|---|
 | `-e` | エンコード（ELF → .pex）モード |
 | `-o<file>` | 出力ファイル名（`-o` と直結、スペース不可） |
-| `-n<name>` | アプリ名（最大 24 文字、P/ECE メニューに表示） |
+| `-n<name>` | アプリ名（最大 24 バイト、P/ECE メニューに表示）。**raw バイトをそのまま埋め込む** — 日本語名は SJIS で渡す必要がある |
+| `-N<name>` | アプリ名。**UTF-8 入力を CP932 に変換**して埋め込む（最大 24 バイト）。UTF-8 ソースツリーから日本語キャプションを付ける場合はこちら |
 | `-i<file>` | アイコン画像（256 バイト .pid 形式） |
+
+> P/ECE メニューのキャプションは SJIS (CP932)。`-n` はバイト列を無変換で書き込むため、ターミナル／Makefile が UTF-8 の現環境では日本語キャプションは `-N` を使うのが安全。ASCII 名なら `-n` / `-N` どちらでもよい。
 
 ### 出力確認
 
