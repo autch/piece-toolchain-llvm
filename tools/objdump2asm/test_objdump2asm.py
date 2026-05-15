@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
 from objdump2asm import (
-    parse, split_modules, emit_module,
+    parse, split_modules, emit_module, collect_externally_referenced,
     _build_label_info, _rename_synth_refs,
     ModuleHeader, SectionHeader, RealLabel, SynthLabel, Instruction, Reloc,
 )
@@ -479,6 +479,62 @@ class TestMultiModule(unittest.TestCase):
         h1 = next(i for i in modules[1] if isinstance(i, ModuleHeader))
         self.assertEqual(h0.obj_name, 'adddf3')
         self.assertEqual(h1.obj_name, 'muldf3')
+
+    def test_collect_externally_referenced(self):
+        # scan64.o defines `__scan64`; muldf3.o references it via REL_H/M/L.
+        # That cross-module reference must mark `__scan64` as external.
+        # `shftltexp` is defined by both muldf3.o and mulsf3.o but is only
+        # referenced inside its own defining module, so it must NOT be flagged.
+        text = (
+            'libfp.a(mulsf3.o):\tfile format elf32-s1c33\n'
+            'Disassembly of section .text:\n'
+            '00000000 <__mulsf3>:\n'
+            '       0: 03 02        \tpushn\t%r3\n'
+            '00000010 <shftltexp>:\n'
+            '      10: 03 03        \tpopn\t%r3\n'
+            'libfp.a(muldf3.o):\tfile format elf32-s1c33\n'
+            'Disassembly of section .text:\n'
+            '00000000 <__muldf3>:\n'
+            '       0: 00 c0        \text\t0\n'
+            '\t\t\t\t00000000:  R_S1C33_REL_H\t__scan64\n'
+            '       2: 00 c0        \text\t0\n'
+            '\t\t\t\t00000002:  R_S1C33_REL_M\t__scan64\n'
+            '       4: 00 1c        \tcall\t0\n'
+            '\t\t\t\t00000004:  R_S1C33_REL_L\t__scan64\n'
+            '00000010 <shftltexp>:\n'
+            '      10: 03 03        \tpopn\t%r3\n'
+            'libfp.a(scan64.o):\tfile format elf32-s1c33\n'
+            'Disassembly of section .text:\n'
+            '00000000 <__scan64>:\n'
+            '       0: 03 02        \tpushn\t%r3\n'
+        )
+        modules = split_modules(parse_text(text))
+        ext = collect_externally_referenced(modules)
+        self.assertIn('__scan64', ext)
+        self.assertNotIn('shftltexp', ext)
+
+    def test_global_only_for_external_or_abi(self):
+        """When emit_module is given an externally_referenced set, only ABI
+        symbols (`__`-prefixed) and externally referenced labels get .global.
+        Internal jump targets stay file-local to avoid duplicate-symbol
+        errors when sibling .o files share label names."""
+        text = (
+            'libfp.a(mulsf3.o):\tfile format elf32-s1c33\n'
+            'Disassembly of section .text:\n'
+            '00000000 <__mulsf3>:\n'
+            '       0: 03 02        \tpushn\t%r3\n'
+            '00000010 <shftltexp>:\n'
+            '      10: 03 03        \tpopn\t%r3\n'
+        )
+        modules = split_modules(parse_text(text))
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            emit_module(modules[0], out_dir, externally_referenced=set())
+            out = (out_dir / 'mulsf3.s').read_text()
+        self.assertIn('\t.global\t__mulsf3', out)
+        self.assertNotIn('\t.global\tshftltexp', out)
+        # Label definition itself must still appear in the body.
+        self.assertIn('\nshftltexp:\n', out)
 
     def test_emit_two_modules(self):
         text = (

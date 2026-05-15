@@ -17,7 +17,10 @@ Transformations applied:
   - Synthesized labels <LN> renamed to .L_{funcname}_{N} (globally unique)
   - Spurious synthesized labels (unreferenced by non-relocated instructions) deleted
   - ext instructions with no relocation preserved as-is
-  - All real symbols declared .global
+  - .global declarations are emitted only for ABI symbols (starting with `__`)
+    and symbols actually referenced from other modules; internal jump targets
+    (getman2, count, shftltexp, L1, L2, ...) are left as file-local to avoid
+    duplicate-symbol errors when the recovered .o files are linked together.
 """
 
 import re
@@ -261,8 +264,49 @@ def _write_instr(f, mnemonic: str, operands: str, comment: str) -> None:
 
 # ── Pass 2: emit module ────────────────────────────────────────────────────────
 
-def emit_module(module_items: List[Item], out_dir: Path) -> str:
+def collect_externally_referenced(modules: List[List[Item]]) -> Set[str]:
+    """Return symbol names that are defined in one module and referenced from a
+    different module.
+
+    A symbol that is only referenced from within the module that defines it
+    does not need to be global; making it file-local prevents duplicate-symbol
+    errors when sibling .o files reuse the same label name (count, shift, end,
+    L1, L2, shftltexp, ...).
+    """
+    defined_in: Dict[str, Set[int]] = {}
+    referenced_in: Dict[str, Set[int]] = {}
+
+    for idx, items in enumerate(modules):
+        for item in items:
+            if isinstance(item, RealLabel):
+                defined_in.setdefault(item.name, set()).add(idx)
+            elif isinstance(item, Instruction) and item.reloc is not None:
+                referenced_in.setdefault(item.reloc.symbol, set()).add(idx)
+
+    externally_referenced: Set[str] = set()
+    for sym, def_mods in defined_in.items():
+        ref_mods = referenced_in.get(sym, set())
+        if ref_mods - def_mods:
+            externally_referenced.add(sym)
+    return externally_referenced
+
+
+def _is_global_symbol(name: str, externally_referenced: Set[str]) -> bool:
+    # ABI / runtime entry points are conventionally `__` -prefixed.
+    if name.startswith('__'):
+        return True
+    return name in externally_referenced
+
+
+def emit_module(module_items: List[Item], out_dir: Path,
+                externally_referenced: Optional[Set[str]] = None) -> str:
     """Write a .s file for one module.
+
+    Args:
+        externally_referenced: symbols that other modules reference (computed
+            by collect_externally_referenced over the full module list).
+            None means "treat every real label as potentially external", which
+            preserves the historical behaviour for single-module unit tests.
 
     Returns:
         Path of the written file, or '' if no ModuleHeader was found.
@@ -309,8 +353,17 @@ def emit_module(module_items: List[Item], out_dir: Path) -> str:
         if section:
             f.write(f'\t{section.name}\n\n')
 
-        for lbl in real_labels:
-            f.write(f'\t.global\t{lbl.name}\n')
+        if externally_referenced is None:
+            # Single-module fallback: keep every real label global so that the
+            # historical behaviour of unit tests / one-shot invocations is
+            # preserved.
+            global_labels = [lbl.name for lbl in real_labels]
+        else:
+            global_labels = [lbl.name for lbl in real_labels
+                             if _is_global_symbol(lbl.name, externally_referenced)]
+
+        for name in global_labels:
+            f.write(f'\t.global\t{name}\n')
         f.write('\n')
 
         # ── Emit code sequentially ────────────────────────────────────────
@@ -391,10 +444,11 @@ def main() -> None:
 
     items = parse(lines)
     modules = split_modules(items)
+    externally_referenced = collect_externally_referenced(modules)
 
     count = 0
     for module_items in modules:
-        out = emit_module(module_items, out_dir)
+        out = emit_module(module_items, out_dir, externally_referenced)
         if out:
             count += 1
 
