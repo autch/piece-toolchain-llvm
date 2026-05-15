@@ -41,7 +41,14 @@ PYTHON  := python3
 SRF2ELF := $(PYTHON) $(TOPDIR)/tools/srf2elf/srf2elf.py
 OBJDUMP2ASM := $(PYTHON) $(TOPDIR)/tools/objdump2asm/objdump2asm.py
 SDKLIB  := $(TOPDIR)/sdk/lib
-SDKINC  := $(TOPDIR)/sdk/include
+# tools/crt/include/ holds our canonical copies of the P/ECE SDK headers
+# the build needs. The originals under sdk/include/ remain untouched as
+# reference material but are no longer consumed by the build.
+LOCALINC := $(TOPDIR)/tools/crt/include
+# Source directories for headers maintained alongside their respective
+# from-source libraries.
+SIMPLEINC := $(TOPDIR)/tools/simple
+SPRITEINC := $(TOPDIR)/tools/sprite
 
 TARGET  := s1c33-none-elf
 INCLUDE := -I$(SYSROOT)/include
@@ -76,13 +83,6 @@ ASFLAGS_CRT := --target=$(TARGET) -c -ffreestanding
 # Top-level targets
 # -----------------------------------------------------------------------
 
-SDK_LIBS := \
-	$(SYSROOT)/lib/libio.a \
-	$(SYSROOT)/lib/liblib.a \
-	$(SYSROOT)/lib/libmath.a \
-	$(SYSROOT)/lib/libstring.a \
-	$(SYSROOT)/lib/libctype.a
-
 NEWLIB_LIBS := \
 	$(SYSROOT)/lib/libc.a \
 	$(SYSROOT)/lib/libm.a
@@ -96,7 +96,6 @@ all: $(SYSROOT)/include/.newlib-stamp \
      $(SYSROOT)/lib/libcxxrt.a \
      $(SYSROOT)/lib/libclang_rt.builtins-s1c33.a \
      $(NEWLIB_LIBS) \
-     $(SDK_LIBS) \
      $(SYSROOT)/lib/piece.ld \
      muslib-install \
      pceshim-install
@@ -122,8 +121,14 @@ clean:
 	      $(SYSROOT)/lib/libpceshim.a \
 	      $(SYSROOT)/lib/libcxxrt.a \
 	      $(SYSROOT)/lib/libclang_rt.builtins-s1c33.a \
-	      $(NEWLIB_LIBS) \
-	      $(SDK_LIBS)
+	      $(NEWLIB_LIBS)
+	@# Old SRF-converted SDK libraries (no longer built, but may linger
+	@# from a prior sysroot before Stage B).  Harmless to attempt rm.
+	rm -f $(SYSROOT)/lib/libio.a \
+	      $(SYSROOT)/lib/liblib.a \
+	      $(SYSROOT)/lib/libmath.a \
+	      $(SYSROOT)/lib/libstring.a \
+	      $(SYSROOT)/lib/libctype.a
 	rm -f $(SYSROOT)/include/.newlib-stamp
 	$(MAKE) -C $(TOPDIR)/tools/pceshim clean
 
@@ -143,20 +148,40 @@ $(BUILDDIR):
 #   would add overhead to every stdio call.
 # -----------------------------------------------------------------------
 
-# P/ECE SDK headers: canonical source is sdk/include/.
-# Listed as bare names here; install rule copies from $(SDKINC)/.
-PIECE_HEADER_NAMES := \
+# P/ECE SDK-derived headers, kept under tools/crt/include/ and installed
+# directly into the sysroot. The originals in sdk/include/ are reference
+# only -- the build no longer reads them.
+#   - s1c33cpu.h is a rewrite that avoids as33-only mnemonics (xand/xoor)
+#     in inline asm() which the LLVM S1C33 assembler cannot accept.
+#   - PIECE_Bmp.h / PIECE_Std.h / draw.h / piece.h / smcvals.h are
+#     byte-faithful copies of the SDK originals (SJIS / CRLF preserved).
+LOCAL_HEADER_NAMES := \
 	PIECE_Bmp.h \
 	PIECE_Std.h \
 	draw.h \
-	pclsprite.h \
 	piece.h \
 	s1c33cpu.h \
+	smcvals.h
+
+# Headers maintained alongside the sprite library source. pclsprite.h
+# v1.00 lives in tools/sprite/ and is included by both the sprite library
+# itself (via "pclsprite.h", locally) and by the simple library (via
+# <pclsprite.h>, after sysroot install).
+SPRITE_HEADER_NAMES := \
+	pclsprite.h
+
+# Headers maintained alongside the simple library source. thread.h v0.80
+# (in tools/simple/) is newer than sdk/include/thread.h v0.50 and is the
+# canonical version. simple.h is identical to the sdk/include/ copy.
+SIMPLE_HEADER_NAMES := \
 	simple.h \
-	smcvals.h \
 	thread.h
 
-$(SYSROOT)/include/.newlib-stamp: $(NEWLIB_INCLUDE) | $(BUILDDIR)
+$(SYSROOT)/include/.newlib-stamp: $(NEWLIB_INCLUDE) \
+	$(addprefix $(LOCALINC)/,$(LOCAL_HEADER_NAMES)) \
+	$(addprefix $(SPRITEINC)/,$(SPRITE_HEADER_NAMES)) \
+	$(addprefix $(SIMPLEINC)/,$(SIMPLE_HEADER_NAMES)) \
+	| $(BUILDDIR)
 	@echo "Installing newlib headers into sysroot..."
 	@mkdir -p $(SYSROOT)/include/machine $(SYSROOT)/include/sys
 	@# Copy all newlib standard C headers
@@ -169,9 +194,16 @@ $(SYSROOT)/include/.newlib-stamp: $(NEWLIB_INCLUDE) | $(BUILDDIR)
 	rm -f $(SYSROOT)/include/stdarg.h \
 	      $(SYSROOT)/include/stddef.h \
 	      $(SYSROOT)/include/float.h
-	@# Install P/ECE SDK headers from sdk/include/ (canonical source, always
-	@# available from a fresh clone; these override any newlib equivalents)
-	cp $(addprefix $(SDKINC)/,$(PIECE_HEADER_NAMES)) $(SYSROOT)/include/
+	@# Install P/ECE SDK-derived headers held under tools/crt/include/.
+	@# These supersede any newlib equivalents that share a name and are
+	@# the build's authoritative copies (the sdk/include/ originals are
+	@# reference only).
+	cp $(addprefix $(LOCALINC)/,$(LOCAL_HEADER_NAMES)) $(SYSROOT)/include/
+	@# Install library-side headers from their respective tools/<lib>/
+	@# directories. These are the canonical sources for the listed
+	@# headers; sdk/include/ copies are reference only.
+	cp $(addprefix $(SPRITEINC)/,$(SPRITE_HEADER_NAMES)) $(SYSROOT)/include/
+	cp $(addprefix $(SIMPLEINC)/,$(SIMPLE_HEADER_NAMES)) $(SYSROOT)/include/
 	@# Add _REENT_ONLY wrapper so #include <stdio.h> etc. doesn't pull in full reent
 	@printf '#ifndef _REENT_ONLY\n#define _REENT_ONLY\n#endif\n' > $(SYSROOT)/include/newlib_config.h
 	@touch $@
@@ -339,23 +371,20 @@ $(SYSROOT)/lib/libcxxrt.a: $(BUILDDIR)/cxxrt.o $(BUILDDIR)/cxxnew.o $(BUILDDIR)/
 	$(LLVM_AR) rcs $@ $^
 
 # -----------------------------------------------------------------------
-# EPSON SDK libraries — converted from lib33 SRF format to GNU ar ELF
+# (Removed: EPSON SDK libraries — converted from lib33 SRF format to GNU
+# ar ELF.)
 #
-# Note: fp.lib and idiv.lib are NOT converted here — their functions are
-# now provided by libclang_rt.builtins-s1c33.a (recovered assembly).
+# fp.lib / idiv.lib were already replaced by libclang_rt.builtins-s1c33.a
+# in compiler-rt Phase 1.  io.lib / lib.lib / math.lib / string.lib /
+# ctype.lib were used as fallbacks during newlib Phase 2 Stage A.  Stage B
+# (this commit) drops them entirely now that on-hardware sample apps
+# verify newlib's libc.a / libm.a cover all symbol needs.
+#
+# The ctype_table.o auxiliary (which bridged newlib's _ctype_[] lookups to
+# the SDK's function-only libctype.a) is no longer needed because
+# newlib's libc.a defines _ctype_ itself.  See tools/crt/ctype_table.c
+# for the now-unused source kept as reference.
 # -----------------------------------------------------------------------
-
-$(SYSROOT)/lib/libio.a:     $(SDKLIB)/io.lib     ; $(SRF2ELF) $< $@
-$(SYSROOT)/lib/liblib.a:    $(SDKLIB)/lib.lib    ; $(SRF2ELF) $< $@
-$(SYSROOT)/lib/libmath.a:   $(SDKLIB)/math.lib   ; $(SRF2ELF) $< $@
-$(SYSROOT)/lib/libstring.a: $(SDKLIB)/string.lib ; $(SRF2ELF) $< $@
-# libctype.a: SDK function implementations + _ctype_[] table (newlib macros need it).
-$(BUILDDIR)/ctype_table.o: ctype_table.c | $(BUILDDIR) $(SYSROOT)/include/.newlib-stamp
-	$(CLANG) $(CFLAGS_CRT) $< -o $@
-
-$(SYSROOT)/lib/libctype.a: $(SDKLIB)/ctype.lib $(BUILDDIR)/ctype_table.o
-	$(SRF2ELF) $(SDKLIB)/ctype.lib $@
-	$(LLVM_AR) q $@ $(BUILDDIR)/ctype_table.o
 
 # -----------------------------------------------------------------------
 # newlib — built from the newlib/ submodule via its own autotools.

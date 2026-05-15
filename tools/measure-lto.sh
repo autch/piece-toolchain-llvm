@@ -10,7 +10,6 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$ROOT/build/bin"
 SYSROOT="$ROOT/sysroot/s1c33-none-elf"
 LD_SCRIPT="$ROOT/tools/piece.ld"
-SDK_INCLUDE="$ROOT/sdk/include"
 TMPDIR="$(mktemp -d /tmp/lto-measure.XXXXXX)"
 trap "rm -rf $TMPDIR" EXIT
 
@@ -18,9 +17,13 @@ CLANG="$BIN/clang"
 LLD="$BIN/ld.lld"
 SIZE="$BIN/llvm-size"
 
-CFLAGS_COMMON="--target=s1c33-none-elf --sysroot=$SYSROOT -O2 -Wall -I$SDK_INCLUDE -Wno-incompatible-library-redeclaration"
+CFLAGS_COMMON="--target=s1c33-none-elf --sysroot=$SYSROOT -O2 -Wall -Wno-incompatible-library-redeclaration"
 LDFLAGS_COMMON="-m elf32ls1c33 -T $LD_SCRIPT"
-LIBS="-L$SYSROOT/lib -lpceapi -lio -llib -lmath -lstring -lctype -lfp -lidiv"
+# newlib Phase 2 Stage B: the gcc33-era EPSON SDK libraries (-lio -llib
+# -lmath -lstring -lctype) and the long-replaced -lfp / -lidiv are no
+# longer built into the sysroot.  -lpceshim shadows newlib rand/srand and
+# __assert_func to break their dependency cascade into malloc/stdio.
+LIBS="-L$SYSROOT/lib -lpceapi -lpceshim -lc -lm -lclang_rt.builtins-s1c33"
 CRT="$SYSROOT/lib/crt0.o $SYSROOT/lib/crti.o"
 
 VERBOSE="${1:+1}"
