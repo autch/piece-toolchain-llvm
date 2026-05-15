@@ -11,7 +11,7 @@
 | 項目 | 対応状況 |
 |---|---|
 | gcc33（S5U1C33000C）向けCソースのコンパイル | **対応**（ABI準拠、構造体/double引数渡し検証済み） |
-| P/ECE SDK ライブラリとのリンク | **対応**（SRF→ELF変換 or ソースビルド） |
+| P/ECE SDK ライブラリ機能の提供 | **対応**（ソースビルド / 自動生成 / LLVM 再実装、SRF→ELF 変換は通常ビルドでは不使用） |
 | P/ECE カーネルAPIの呼び出し | **対応**（ABI互換 + ヘッダ提供） |
 | Clang → リンク → .pex のワンコマンドビルド | **対応**（sysroot + ToolChain + ppack） |
 | 既存の純正アセンブリソース(.s)の互換性 | **asm33conv経由で対応**（§10.6準拠、一部カテゴリ未実装） |
@@ -51,43 +51,39 @@ P/ECE SDKは以下の構成要素からなる。LLVMツールチェインで開�
 
 | オブジェクト | 内容 | LLVM側の対応 |
 |---|---|---|
-| `cstart.o` | スタートアップコード（pceAPPHEAD + pceAppInit00） | **srf2elfで変換済み** |
-| `defnotify.o` | pceAppNotify デフォルト実装 | **srf2elfで変換済み** |
+| `cstart.o` | スタートアップコード（pceAPPHEAD + pceAppInit00） | **`tools/crt/crt0.c` からビルド** → `crt0.o` |
+| `defnotify.o` | pceAppNotify デフォルト実装 | **`tools/crt/defnotify.c` からビルド** → `crti.o` |
 
 標準リンクライブラリ（リンク順序）:
 
-| 順序 | ライブラリ | 内容 | LLVM側の対応 |
+| 順序 | ライブラリ | 内容 | LLVM 側の対応 |
 |---|---|---|---|
-| 1 | `pceapi.lib` | P/ECE カーネルAPIスタブ（pceLCDTrans等） | **srf2elfで変換**（`libpceapi.a`、現状維持） |
-| 2 | （newlib） | C 標準ライブラリ（`printf` / `malloc` / `strtod` / `setjmp` 等） | **newlib `libc.a`**（newlib Phase 2 Stage A、2026-04） |
-| 3 | （newlib） | 数学関数（`sin` / `cos` / `pow` / `sqrt` 等） | **newlib `libm.a`**（同上） |
-| 4 | `io.lib` | I/O関数 | Stage A フォールバックとして srf2elf 変換版を残置 |
-| 5 | `lib.lib` | 標準Cライブラリ（既知バグあり、errata.md参照） | 同上 |
-| 6 | `math.lib` | 数学関数 | 同上 |
-| 7 | `string.lib` | C文字列関数（memset, memcpy等） | 同上 |
-| 8 | `ctype.lib` | 文字分類関数 | 同上 |
-| 9 | `fp.lib` | 浮動小数点演算（`__addsf3`, `__divsf3`等） | **compiler-rtで置き換え済み**（`libclang_rt.builtins-s1c33.a`） |
-| 10 | `idiv.lib` | 整数除算（`__divsi3`, `__modsi3`等） | **compiler-rtで置き換え済み**（同上） |
+| 1 | `pceapi.lib` | P/ECE カーネル API スタブ（pceLCDTrans 等） | **`tools/crt/gen_pceapi.py` がカーネル ROM シンボル表 `vector.h` から自動生成**（`libpceapi.a`） |
+| 2 | （新規） | newlib `rand`/`srand`/`__assert_func` を小型版に差し替えるシム | **`libpceshim.a`**（tools/pceshim/ ソースビルド） |
+| 3 | （newlib） | C 標準ライブラリ（`printf` / `malloc` / `strtod` / `setjmp` / `memset` / `isalpha` / 等） | **newlib `libc.a`** |
+| 4 | （newlib） | 数学関数（`sin` / `cos` / `pow` / `sqrt` 等） | **newlib `libm.a`** |
+| 5 | `fp.lib` | 浮動小数点演算（`__addsf3`, `__divsf3` 等） | **compiler-rt で置き換え**（`libclang_rt.builtins-s1c33.a`） |
+| 6 | `idiv.lib` | 整数除算（`__divsi3`, `__modsi3` 等） | **compiler-rt で置き換え**（同上） |
+| — | `io.lib` / `lib.lib` / `math.lib` / `string.lib` / `ctype.lib` | gcc33 era の SDK C ライブラリ | **削除（Phase 2 Stage B、2026-05-15）** — 全シンボルを newlib で代替 |
 
-**newlib Phase 2 Stage A**: newlib の `libc.a` / `libm.a` を EPSON SDK ライブラリの **前** に置くことで、両者が同名のシンボル（例: `printf`, `malloc`, `sin`）を提供する場合は newlib が勝つ。lib.lib のバグ（sin / pow / strtod / strtok / ispunct）は newlib 版で自動的に解消される。SDK ライブラリは newlib に未実装のシンボル（`pceapi` 経由の特殊関数等）を埋めるフォールバックとして残置されており、**Stage B**（全アプリの実機検証完了後）で削除予定。
+**newlib Phase 2 完了**: Stage A (2026-04-28、newlib と SDK ライブラリの並列リンクで newlib 優先) を経て Stage B (2026-05-15、SDK ライブラリ完全削除) が完了。lib.lib のバグ（sin / pow / strtod / strtok / ispunct）は newlib 版で完全に解消。BlackWings / odemaru / fpkplay / pmdplay 等の実機検証で SDK ライブラリへの参照が 0 件であることを確認後、`BareMetal.cpp` から `-lio -llib -lmath -lstring -lctype` を撤去、`tools/crt/Makefile` の SRF→ELF 変換レシピも削除。
 
-上記以外のライブラリ（`muslib.lib` 等）はアプリケーション側で必要に応じて明示的にリンクする。
+上記以外のライブラリ（`libmuslib.a` / `libsimple.a` / `libsprite.a` / `libdefinst.a`）はアプリケーション側で必要に応じて明示的にリンクする。これらはすべて `tools/{muslib,simple,sprite}/` のソースから LLVM でビルドされる。
 
-srf2elfは .o（SRFオブジェクト）と .lib（lib33アーカイブ）の両方に対応済み。lib33アーカイブのフォーマットは `docs/lib33_format.md` を参照。
+srf2elf は .o（SRF オブジェクト）と .lib（lib33 アーカイブ）の両方に対応済みだが、通常ビルドフローでは使われない（開発時専用ターゲット `make regen-builtins-asm` で fp.lib / idiv.lib のアセンブリ回収に用いるのみ）。lib33 アーカイブのフォーマットは `docs/lib33_format.md` を参照。
 
-リンクコマンド例（Phase 2 Stage A での実際の自動リンク順、`BareMetal.cpp` 参照）:
+リンクコマンド例（Phase 2 Stage B での実際の自動リンク順、`BareMetal.cpp` 参照）:
 ```
 ld.lld -T tools/piece.ld crt0.o crti.o hello.o \
   -lclang_rt.builtins-s1c33 \
   --start-group \
-    -lcxxrt -lpceapi \
+    -lcxxrt -lpceapi -lpceshim \
     -lc -lm \
-    -lio -llib -lmath -lstring -lctype \
   --end-group \
   -o hello.elf
 ```
 
-fp.libとidiv.libはcompiler-rtで置き換え済み（Phase 1）。lib.libのエラッタ（§6参照）は newlib `libc.a` の優先リンクにより自動的に解消（Phase 2 Stage A）。詳細は `docs/build-howto.md` および §5.8 を参照。
+fp.lib と idiv.lib は compiler-rt で置き換え済み（Phase 1）。lib.lib のエラッタ（§6 参照）は newlib `libc.a` で解消済み（Phase 2 Stage B 完了）。詳細は `docs/build-howto.md` および §5.8 を参照。
 
 **SRF→ELF変換ツール（srf2elf）:**
 
@@ -106,19 +102,23 @@ srf2elfはSRFオブジェクトファイル(.o)のELF変換に対応済み。SRF
     → gcc33 → ext33 → as33 → lk33(+boot.o +pceapi.lib +lib.lib +fp.lib +idiv.lib ...)
     → hello.srf → ppack → hello.pex
 
-[LLVMツールチェイン (Phase 2 Stage A)]
-  clang --target=s1c33-none-elf hello.c
+[LLVM ツールチェイン (Phase 2 Stage B 以降)]
+  clang hello.c
     → LLVM backend → ELF .o
+    (--target=s1c33-none-elf は LLVM_DEFAULT_TARGET_TRIPLE で既定済み、明示不要)
   newlib (autotools build, tools/crt/Makefile)
     → libc.a / libm.a (S1C33 ABI 準拠)
-  srf2elf pceapi.lib io.lib lib.lib math.lib string.lib ctype.lib
-    → ELF .a に変換（fp.lib/idiv.lib は compiler-rt で置き換え済み、変換不要）
+  gen_pceapi.py vector.h
+    → libpceapi.a にソースから生成
+    (fp.lib/idiv.lib は compiler-rt、io/lib/math/string/ctype は newlib、
+     simple/sprite/muslib は tools/{simple,sprite,muslib}/ のソース、
+     pceapi も vector.h からの生成に移行したため SDK .lib の SRF→ELF
+     変換は通常ビルドで一切不要)
   ld.lld -T piece.ld hello.o crt0.o crti.o \
       -lclang_rt.builtins-s1c33 \
       --start-group \
-        -lcxxrt -lpceapi \
+        -lcxxrt -lpceapi -lpceshim \
         -lc -lm \
-        -lio -llib -lmath -lstring -lctype \
       --end-group
     → hello.elf → ppack → hello.pex
 ```
@@ -507,7 +507,7 @@ struct _foo { long long a; };    // → スタック渡し（マニュアルど�
 - 最大サイズ（悲観的）で命令を出力する
 - グローバル変数アクセス → ext+ext+ld.w の擬似命令
 - 関数呼び出し → ext+ext+call / ext+ext+call.d の擬似命令
-- GP最適化有効時 → ext+ext+ld.w [%r8] の擬似命令
+- R8 ベース絶対アドレッシング有効時 (`FeatureR8AbsGlobal`、デフォルト on) → `ext sym@ah / ext sym@al / ld.* [%r8]` の擬似命令 (`*_ABS`)。MIPS スタイルの可変 GP ではなく、`R8 == 0` の事実を利用した絶対アドレッシング (§5.3 参照)
 
 **MCリラクゼーション（S1C33AsmBackend）:**
 - `relaxInstruction()`: ext+ext+op → ext+op → op への縮小判定
@@ -556,7 +556,17 @@ jp   %r9        ; カーネル関数へジャンプ
 
 **ユーザアプリでの扱い**: R8 を Reserved として登録し、レジスタアロケータが決して割り付けないようにする。ユーザコンパイルコードは R8 を変更してはならない。
 
-**MIPSスタイルの GP 最適化との違い**: ユーザアプリ向けに R8 をユーザの `.sdata` セクション先頭に向ける「GP最適化」は**実装しない**。R8 は常にカーネルが設定する 0x0 であり、ユーザのグローバルデータポインタとしては使わない。
+**`R8 == 0` を最適化材料として利用** (commit `08608bab3ac0`, 2026-04-24): R8 が常に 0 という事実をコンパイラが認識し、グローバル変数への load/store を以下の 6 バイト形式に畳み込む:
+
+```asm
+ext  sym@ah     ; bits[25:13]
+ext  sym@al     ; bits[12:0]
+ld.* %rd, [%r8] ; EA = 0 + sym = sym (絶対アドレス)
+```
+
+26-bit 絶対アドレスを ext 2 個に分割するため、P/ECE のメモリマップ (user code 0x00100000+, kernel ROM 0x00080000, MMIO 0x00040000, external RAM ≤ 0x03FFFFFF) を覆える。アドレスが範囲超過する場合はリンク時に AsmBackend がエラー報告。実装は `*_ABS` 擬似命令 + `S_ABS_AH/AL` MC specifier (`sym@ah`/`sym@al`) + `R_S1C33_REL_AH/AL` relocation (番号は gcc33 SRF と共通) + `FeatureR8AbsGlobal` SubtargetFeature (デフォルト on、`-mattr=-r8-abs` で旧来の materialize-then-indirect 形式にフォールバック)。menu2 のサンプルアプリで `.pex` 3396 → 3366 バイト (-30、gcc33 比 +9.4% → +8.5%)。
+
+**MIPS スタイルの GP 最適化との違い**: ユーザアプリ向けに R8 をユーザの `.sdata` セクション先頭に向ける「可変 GP 最適化」は**実装しない**。R8 は常にカーネルが設定する 0x0 のまま固定で、`R8 == 0` の事実を利用した絶対アドレッシングのみを行う。
 
 **将来のカーネルコンパイル対応**: カーネル自体を Clang でコンパイルする場合、カーネルのブートコード（リセットハンドラ）がアセンブリで `ld.w %r8, 0` を明示的に実行する必要がある。R8 は Reserved なので通常の C コードには影響しない。
 
@@ -604,7 +614,7 @@ gcc33とas33の間でpackedの解釈が整合しておらず、P/ECE開発では
 
 エプソン純正Cライブラリ（lib.lib）にはsin()、strtok()、strtod()、pow()、ispunct()等に既知のバグがある（特にsin()はPSRのVフラグ残留で結果が反転するバグ）。ただしP/ECE SDKの他のコンポーネントがlib.libの関数に依存している可能性があるため、完全な除去は慎重に行う必要がある。
 
-**Phase 2 Stage A での対応（2026-04 完了）**: newlib の `libc.a` / `libm.a` を EPSON SDK ライブラリの **前** にリンクすることで、これらバグのある関数は自動的に newlib の正しい実装が呼ばれる。EPSON SDK ライブラリは newlib に未実装のシンボル（`pceapi` 経由の特殊関数等）を埋めるフォールバックとして残置されている。Stage B（全アプリの実機検証完了後の SDK ライブラリ完全削除）に向けた漸進的移行戦略。
+**Phase 2 完了による対応（Stage A: 2026-04-28、Stage B: 2026-05-15）**: newlib の `libc.a` / `libm.a` を EPSON SDK ライブラリの **前** にリンクすることで（Stage A）、バグのある関数は自動的に newlib の正しい実装が呼ばれる構成に移行。続いて Stage B で gcc33 era の `libio.a / liblib.a / libmath.a / libstring.a / libctype.a` 自体をリンク行とビルドフローから削除し、newlib による完全置換を達成。BlackWings / odemaru / fpkplay / pmdplay 等の実機検証で SDK ライブラリへの参照が 0 件であることを確認後に実施。
 
 #### 5.8.2 Cランタイムの互換性方針
 
@@ -614,7 +624,7 @@ P/ECEにおけるカーネル↔アプリケーション境界は、pcekn.symで
 
 **（a）Clangビルドのアプリ → gcc33ビルドのカーネル（現在の状況）**
 - 呼び出し規約（S5U1C33000C ABI）が一致していれば問題なし。現バックエンドで保証済み。
-- アプリのCランタイムはカーネルから独立しているため、newlibでもSDK liblibでも自由に選択可能。
+- アプリの C ランタイムはカーネルから独立しているため、newlib に切り替えてもカーネル ABI に影響なし（実証済み）。
 
 **（b）gcc33ビルドのアプリ（既存.pex） → Clangビルドのカーネル（将来）**
 - 既存の.pexバイナリが変更なしで動作することが必須。
@@ -627,7 +637,7 @@ newlib移植の方針と現状:
 
 **Phase 1（完了、2026-04）:** 標準Cヘッダを newlib から提供するよう移行済み。
 `sysroot/s1c33-none-elf/include/` の標準ヘッダは newlib サブモジュール（`autch/newlib-s1c33`）から生成する。
-P/ECE 固有ヘッダ（`piece.h` 等 11 ファイル）は引き続き `sdk/include/` から提供。
+P/ECE 固有ヘッダは Stage B 完了時点で `tools/crt/include/` および `tools/{simple,sprite}/` のソースツリー側を canonical 元として参照する形に再編済み。`sdk/include/` は reference material 化。
 
 **Phase 2 Stage A（完了、2026-04-28）:** newlib の C ライブラリ本体（`libc.a` / `libm.a`）を S1C33 向けにビルドし、EPSON SDK ライブラリの前にリンクすることで段階的に置き換え。実機確認済（pmdplay、システムメニュー含む）。
 
@@ -650,7 +660,7 @@ LLVM backend 側で必要だった追加修正（newlib をビルドする過程
 - newlib `_sbrk` は `_pceheapstart + _pceheapsize` から upward に成長、上限チェックなし
 - `_def_vbuff` は SYSERRVBUFF（0x13c000）と alias、BSS 実体を持たない（11 KB BSS 節約 / アプリ）
 
-**Phase 2 Stage B（未着手）:** Stage A で全アプリの実機検証完了後、`BareMetal.cpp` から `-lio -llib -lmath -lstring -lctype` を削除し EPSON SDK ライブラリへの依存を完全に解消する。
+**Phase 2 Stage B（完了、2026-05-15）:** Stage A で全アプリの実機検証を完了後、`BareMetal.cpp` から `-lio -llib -lmath -lstring -lctype` を削除、`tools/crt/Makefile` の SRF→ELF 変換レシピ 5 本も撤去し EPSON SDK ライブラリへの依存を完全に解消。`ctype_table.o` も newlib `libc.a` が `_ctype_` を持つため不要になり退役。`make` / `make sysroot` で `sdk/lib/` を一切読まなくなった（唯一の残存読み出しは開発時専用 `make regen-builtins-asm` の fp.lib / idiv.lib アセンブリ抽出のみ）。
 
 **カーネルビルドにnewlibを使用してはならない**。これはgcc33ビルドの既存.pexとの後方互換性を破壊する恐れがあるため。
 
@@ -675,12 +685,12 @@ gcc33互換の引数規約: 64ビット値はレジスタペアで渡す。通�
 
 必要なランタイム関数: `__adddi3`, `__subdi3`, `__muldi3`, `__divdi3`, `__moddi3`, `__udivdi3`, `__umoddi3`, `__cmpdi2`, `__ucmpdi2`, `__fixsfdi`, `__fixdfdi`, `__fixunssfdi`, `__fixunsdfdi`, `__floatdisf`, `__floatdidf`, `__floatundisf`, `__floatundidf`, `__ashldi3`, `__lshrdi3`, `__ashrdi3`
 
-**[完了 — compiler-rt Phase 1 + newlib Phase 2 Stage A backend修正]** これらはすべて `libclang_rt.builtins-s1c33.a` が提供する。
+**[完了 — compiler-rt Phase 1 + newlib Phase 2 backend 修正]** これらはすべて `libclang_rt.builtins-s1c33.a` が提供する。
 エプソン純正では `__fixsfdi`, `__fixunssfdi`, `__floatdisf`（float⇔64bit変換）と `__cmpdi2` が
 未実装だったが、compiler-rt の GENERIC_SOURCES（汎用C実装）により提供される。
 Clang ドライバが `-lclang_rt.builtins-s1c33` を自動挿入するためユーザーの明示的指定は不要。
 
-S1C33 backend 側では `S1C33ISelLowering` でこれらの RTLIB エントリすべてを `setLibcallImpl()` で登録する必要がある（S1C33 は LLVM 標準の `RuntimeLibcallsImpl` ターゲットテーブルに含まれていないため）。i64 シフト系（`__ashldi3` / `__lshrdi3` / `__ashrdi3`）は Phase 1、float↔i64 系（`__fixsfdi` 等 8 個）は newlib Phase 2 Stage A の過程で追加された。詳細は `S1C33ISelLowering.cpp` の `setLibcallImpl` 連続呼び出しを参照。
+S1C33 backend 側では `S1C33ISelLowering` でこれらの RTLIB エントリすべてを `setLibcallImpl()` で登録する必要がある（S1C33 は LLVM 標準の `RuntimeLibcallsImpl` ターゲットテーブルに含まれていないため）。i64 シフト系（`__ashldi3` / `__lshrdi3` / `__ashrdi3`）は compiler-rt Phase 1 (2026-04 前期)、float↔i64 系（`__fixsfdi` 等 8 個）は newlib Phase 2 Stage A (2026-04-28) の過程で追加された。詳細は `S1C33ISelLowering.cpp` の `setLibcallImpl` 連続呼び出しを参照。
 
 ---
 
@@ -791,7 +801,7 @@ R_S1C33_REL21（ext+call/call.d/jp/jp.d の21ビット版）も同じ基準。
 - ext+ALU 3-operand形式（`ext imm / op %rd, %rs` → `rd = rs <op> imm`）のISel+展開（`*_rri` 疑似命令 + `ExpandExtPseudos`）
 - デクリメントイディオム（`add %r, -1` → `sub %r, 1`）パターン追加
 - 分岐最適化（`analyzeBranch` / `insertBranch` / `removeBranch` / `reverseBranchCondition` 実装）
-- ユーザアプリ向け GP 最適化は実装しない（R8 = カーネルテーブルベース 0x0 として Reserved のみで対応）
+- MIPS スタイルの可変 GP 最適化は実装しない (R8 = カーネルテーブルベース 0x0 として Reserved)。ただし `R8 == 0` の事実を利用した絶対アドレッシング (`ext sym@ah / ext sym@al / ld.* [%r8]`) は実装済み (`FeatureR8AbsGlobal`、commit `08608bab3ac0`、§5.3 参照)
 
 ### Phase 5: SRF→ELF変換 + ランタイム + リンカスクリプト — **完了**
 
@@ -847,7 +857,7 @@ R_S1C33_REL21（ext+call/call.d/jp/jp.d の21ビット版）も同じ基準。
   `config.sub` への s1c33 CPU 認識追加。`autoreconf -i` (autoconf 2.69 / automake 1.15.1) で
   `configure` / `Makefile.in` 再生成。
 - **BareMetal.cpp リンク順更新**: `-lc -lm` を `-lio -llib -lmath -lstring -lctype` の前に挿入し、
-  newlib 優先 + EPSON SDK fallback の Stage A 構成に。
+  newlib 優先 + EPSON SDK fallback の Stage A 構成に（Stage B で SDK 側を撤去）。
 - **S1C33 backend の libcall 拡充**: 64-bit FP↔I64 変換 8 個（`__fixsfdi`, `__fixdfdi`,
   `__floatdisf`, `__floatdidf` 等）を `setLibcallImpl()` で追加。
 - **frame lowering alignment fix**: `MFI.getStackSize()` を `alignTo(4)` で round up し、
@@ -863,12 +873,25 @@ R_S1C33_REL21（ext+call/call.d/jp/jp.d の21ビット版）も同じ基準。
   `iconv -f UTF-8 -t CP932` ルールを挟むパターンを採用。
 - **実機動作確認**: pmdplay（システムメニュー含む）正常動作確認（2026-04-28）。
 
-### Post-Phase-6: newlib Phase 2 Stage B — 未着手
+### Post-Phase-6: newlib Phase 2 Stage B — **完了**（2026-05-15）
 
-Stage A で全アプリの実機検証完了後に着手:
+Stage A で全アプリの実機検証完了後に実施:
+- BlackWings / odemaru / fpkplay / pmdplay 等の map ファイルで gcc33 era SDK ライブラリ
+  (`libio.a / liblib.a / libmath.a / libstring.a / libctype.a`) への参照が 0 件であることを確認
 - `BareMetal.cpp` から `-lio -llib -lmath -lstring -lctype` を削除
-- `tools/crt/Makefile` の SDK ライブラリ srf2elf 変換ルール削除
-- EPSON SDK ライブラリ依存の完全解消
+- `tools/crt/Makefile` の SDK ライブラリ srf2elf 変換ルール 5 本を撤去 (`SDK_LIBS` 変数も削除)
+- `ctype_table.o`（newlib の `_ctype_[]` をシムするブリッジ）も newlib `libc.a` が `_ctype_` を持つため不要となり退役
+- `tools/measure-lto.sh` の `LIBS=` も同様に整理
+- EPSON SDK ライブラリ依存の完全解消 — `make` / `make sysroot` は `sdk/lib/` を一切読まない
+
+### Post-Phase-6: from-source ports — **完了**（2026-05-15）
+
+newlib Phase 2 Stage B と同時期に、シンプル / スプライト 2 ライブラリの **C/asm ソースからのネイティブビルド** を整備:
+- **`tools/asm33conv/asm33conv.py` 拡張**: as33 の x プレフィクス拡張ニーモニック群（xld / xadd / xsub / xand / xoor / xcmp / xjp / xjr* / xcall / xsll / xsra / xsrl）を LLVM 標準アセンブリに展開。`[label]` 絶対アドレス参照は `ext sym@ah; ext sym@al; ld.X [%r8]` (R8=0 経由) に変換。`%sp` 関連は byte→word スケーリング（`xsub %sp,%sp,4` → `sub %sp,1` 等）。`.code/.half/.word/.lcomm/.comm` ディレクティブも LLVM 形式に翻訳。88 件のユニットテストでカバー。
+- **`tools/simple/` / `tools/sprite/`**: 各々の Makefile が `asm33conv.py` → `clang -x assembler` パイプラインで `.s` をアセンブル、C ソースは通常の clang コンパイル。`libsimple.a` / `libdefinst.a` / `libsprite.a` を sysroot にインストール。
+- **`tools/crt/include/` への P/ECE ヘッダ集約**: `PIECE_Bmp.h` / `PIECE_Std.h` / `draw.h` / `piece.h` / `smcvals.h` / `s1c33cpu.h` を `sdk/include/` から `tools/crt/include/` にコピー（SJIS/CRLF 保持）。`pclsprite.h` は `tools/sprite/` を canonical 元に、`simple.h` / `thread.h` は `tools/simple/` を canonical 元に。`sdk/include/` は reference material 化。
+- **`tools/crt/include/s1c33cpu.h` 書き換え**: EPSON 原本の as33 専用ニーモニック (`xand`/`xoor`) を含むインライン asm マクロを、LLVM 標準命令 + 明示 `ext` に書き換え（`ENABLE` / `DISABLE` / `SET_IL0..SET_IL7` / `INT_BEGIN` 等）。
+- **`tools/sprite/pclspbgcheck.c` の asm 切り出し**: gcc の literal-newline マルチライン `asm()` 文字列は clang が受理しないため、`bg_check` 関数本体を `pclspbgcheck_asm.s` に切り出し、`.c` 側は宣言のみ残置。
 
 ---
 
@@ -949,4 +972,4 @@ LLVM実装時に混同しやすい用語の対応:
 | lk33のセクション配置 | lldリンカスクリプト |
 | SRF形式 | ELF形式（llvm-objcopyでバイナリ化） |
 | .def形式（デバッグ情報） | DWARF |
-| GP（グローバルポインタ） | R8 Reserved（カーネル規約 R8=0x0 を尊重） |
+| GP（グローバルポインタ） | R8 Reserved（カーネル規約 R8=0x0 を尊重）。固定値 `R8 == 0` を絶対アドレッシングの最適化基準に利用（§5.3）。MIPS スタイルの可変 GP は未実装 |

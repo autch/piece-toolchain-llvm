@@ -75,7 +75,9 @@ Read `DESIGN_SPEC.md` first — it contains all architecture details, design dec
 
 2. **ext instruction generation follows pessimistic-then-relax strategy.** Code generation emits maximum-size sequences (ext+ext+op), then MC-layer relaxation shrinks them.
 
-3. **R8 is the kernel table base pointer, always 0x0.** The P/ECE kernel sets R8 = 0x0 before calling any application callback. pceapi stubs use `ext N / ld.w %r9, [%r8]` to fetch kernel function pointers from address N. User-compiled code must never modify R8. R8 is Reserved to enforce this. This is NOT a MIPS-style user-data GP — "GP optimization" is not implemented for user apps. Future kernel compilation will need assembly startup code that explicitly sets R8 = 0.
+3. **R8 is the kernel table base pointer, always 0x0.** The P/ECE kernel sets R8 = 0x0 before calling any application callback. pceapi stubs use `ext N / ld.w %r9, [%r8]` to fetch kernel function pointers from address N. User-compiled code must never modify R8. R8 is Reserved to enforce this. Future kernel compilation will need assembly startup code that explicitly sets R8 = 0.
+
+    **The fact that R8 == 0 is exploited as an optimization** (commit `08608bab3ac0`, 2026-04): global load/store is folded to `ext sym@ah / ext sym@al / ld.* [%r8]` (6 bytes; 26-bit absolute address split as bits[25:13]/bits[12:0]) instead of the older 8-byte materialize-then-indirect-load pattern. Implemented via `*_ABS` pseudos, the `S_ABS_AH/AL` MC specifiers (`sym@ah`/`sym@al`), the `R_S1C33_REL_AH/AL` relocations (numbers reused from gcc33 SRF), and the `FeatureR8AbsGlobal` subtarget feature (default on; `-mattr=-r8-abs` falls back). What's **NOT** implemented is a MIPS-style movable GP that points at user `.sdata` — R8 stays fixed at 0 (the kernel guarantee).
 
 4. **Interrupt handlers** use `__attribute__((interrupt_handler))` generating `pushn %r15` / `popn %r15` / `reti`.
 
@@ -125,8 +127,9 @@ Follow the phasing in DESIGN_SPEC.md §8:
 **Current status**: Phase 6 complete. mini_nocrt / minimal / hello / print / jien / fpkplay / pmdplay all verified on real P/ECE hardware (2026-03). Post-Phase-6:
 - compiler-rt Phase 1 ✅ (fp.lib/idiv.lib replaced)
 - newlib Phase 1 ✅ (standard C headers from newlib)
-- **newlib Phase 2 Stage A ✅ (2026-04-28)**: `libc.a` / `libm.a` built from the newlib submodule and linked ahead of EPSON SDK libs (`-lc -lm -lio -llib -lmath -lstring -lctype`); newlib's `printf` / `malloc` / `sin` / `strtod` / `strtok` now beat the buggy `lib.lib` versions. Heap layout: `_pceheapstart` / `_pceheapsize` (kernel pceHeap zone) + newlib sbrk above (no upper bound check); `_def_vbuff` aliases SYSERRVBUFF (0x13c000) so no 11 KB BSS waste per app. Linker symbols documented in `docs/piece-symbols.md`. Verified on real P/ECE hardware: pmdplay including system menu invocation (2026-04-28).
-- Next: newlib Phase 2 Stage B (drop EPSON SDK fallback after exhaustive on-hardware verification).
+- **newlib Phase 2 Stage A ✅ (2026-04-28)**: `libc.a` / `libm.a` built from the newlib submodule and linked ahead of EPSON SDK libs (`-lc -lm -lio -llib -lmath -lstring -lctype`); newlib's `printf` / `malloc` / `sin` / `strtod` / `strtok` beat the buggy `lib.lib` versions. Heap layout: `_pceheapstart` / `_pceheapsize` (kernel pceHeap zone) + newlib sbrk above (no upper bound check); `_def_vbuff` aliases SYSERRVBUFF (0x13c000) so no 11 KB BSS waste per app. Linker symbols documented in `docs/piece-symbols.md`. Verified on real P/ECE hardware: pmdplay including system menu invocation (2026-04-28).
+- **newlib Phase 2 Stage B ✅ (2026-05-15)**: gcc33-era EPSON SDK libraries (`-lio -llib -lmath -lstring -lctype`) dropped from the link line and no longer generated in sysroot. On-hardware verification across all sample apps (BlackWings, odemaru, fpkplay, pmdplay, ...) showed zero residual references to the SRF-converted .a files. `tools/crt/Makefile` no longer reads `sdk/lib/{io,lib,math,string,ctype}.lib`. `ctype_table.o` is also retired since newlib's `libc.a` defines `_ctype_[]` itself. The only remaining build-time read of `sdk/` is the `regen-builtins-asm` development target (not in `all`), which still extracts fp.lib / idiv.lib assembly for compiler-rt's recovered builtins.
+- **From-source ports of simple / sprite libraries ✅ (2026-05-15)**: `tools/simple/` and `tools/sprite/` now build their `.a` from C / `.s` source (replacing the previous SRF-converted libraries). `tools/asm33conv/asm33conv.py` expands the as33 extended mnemonics (xld / xadd / xsub / xand / xoor / xcmp / xjp / xjr* / xcall / xsll / xsra / xsrl, `[label]` absolute addressing via R8=0, and the byte→word scaling for `%sp` operands) into standard LLVM assembly. P/ECE SDK headers (`pclsprite.h`, `simple.h`, `thread.h`) are now sourced from their library directories; the remaining five SDK-derived headers (`PIECE_Bmp.h`, `PIECE_Std.h`, `draw.h`, `piece.h`, `smcvals.h`) plus the patched `s1c33cpu.h` live under `tools/crt/include/`. `sdk/include/` is reference material only.
 
 Within each phase, write lit tests alongside the implementation. Every instruction encoding, every calling convention edge case, every relaxation pattern should have a test.
 
@@ -138,7 +141,7 @@ The project's end goal is not just a compiler — it must link with existing P/E
 - **Standard C headers** come from the **newlib** submodule (`newlib/`). P/ECE-specific headers (11 files) still from `sdk/include/`.
 - **Kernel APIs** (pceLCDTrans, pcePadGet, etc.) live at fixed addresses in ROM. Symbol addresses come from `pcekn.sym`. Define these in the linker script or a header.
 - **Application entry** is via callbacks: the app implements `pceAppInit()` / `pceAppProc()` / `pceAppExit()`, which the kernel calls.
-- **Build pipeline**: `.c → clang → .o (ELF)` + `SDK .lib → srf2elf → .a (ELF)` → `ld.lld` → `.elf` → `llvm-objcopy -O binary`
+- **Build pipeline**: `.c → clang → .o (ELF)` + (sysroot .a from `tools/crt/Makefile`: `gen_pceapi.py` for `libpceapi`, newlib build for `libc`/`libm`, compiler-rt build for `libclang_rt.builtins-s1c33`, source builds under `tools/{simple,sprite,muslib,pceshim}/`) → `ld.lld` → `.elf` → `ppack` → `.pex`
 
 ## Reference Backends
 
@@ -230,7 +233,7 @@ This is distinct from the 2-operand immediate form `op %rd, sign6/imm6` where `%
 - **Nearly all ALU instructions clobber PSR flags** — add, sub, and, or, xor, not, shifts, rotates, and even `ld` with immediates all update N/Z/V/C. Every such instruction needs `Defs = [PSR]` in TableGen. This is critical for correct instruction scheduling around conditional branches.
 - **64-bit integer runtime is incomplete in EPSON's SDK** — `__fixsfdi`, `__fixunssfdi`, `__floatdisf`, `__cmpdi2` were never implemented. compiler-rt must provide these. 64-bit args use register pairs: R12(lo)+R13(hi) for first arg, R14(lo)+R15(hi) for second.
 - **Division is expensive** — 35 instructions for a single div. Default to library call (`__divsi3`), not inline expansion, to avoid code size explosion.
-- **EPSON's C library (lib.lib / math.lib) has known bugs** — sin(), strtok(), pow(), strtod(), ispunct() are broken in the gcc33-era SDK libs. As of newlib Phase 2 Stage A (2026-04), `-lc -lm` is linked ahead of `-lio -llib -lmath -lstring -lctype` in BareMetal.cpp, so newlib's correct implementations win for any of these symbols. EPSON SDK libs remain in the link line as fallback for symbols newlib does not provide; do not remove them until Stage B is complete.
+- **EPSON's C library (lib.lib / math.lib) has known bugs** — sin(), strtok(), pow(), strtod(), ispunct() were broken in the gcc33-era SDK libs. Resolved by newlib Phase 2 Stage B (2026-05): the SRF-converted `libio / liblib / libmath / libstring / libctype` are no longer built into sysroot or referenced from the link line. `-lc -lm` (newlib) is now the sole standard C/math source. Historical context retained here because the symbol map of legacy apps and the gcc33-built kernel SDK still exhibits the same bug surface.
 - **Shift/rotate instructions do NOT support ext** — Manual states "シフト・ローテート命令を除き、ext命令による即値拡張が行えます". Max shift amount is 8 bits (imm4 mapping: 0000=0, ..., 0111=7, 1xxx=8). Shift > 8 must be split into multiple instructions in ISelDAGToDAG using MachineNodes (NOT PerformDAGCombine, which gets re-combined).
 - **Class 1 memory ext displacement is UNSIGNED — negative offsets silently break** — `ext imm13 / ld.* [%rb]` zero-extends imm13. If the optimizer folds a negative offset (e.g., -2 → ext 8190), the CPU reads address `rb + 8190` instead of `rb - 2`. This caused pmdplay O1 bugs (parts not playing, loops stopping). The fix: use `immZExt13` (not `immSExt13`) in DAG patterns so negative offsets are never folded. See "ext Immediate Signedness Rules" section above.
 - **SP-relative offsets are in scaled units, not bytes** — `ld.w [%sp+imm6]`: imm6 is in word units (×4). `ld.h`: halfword units (×2). `ld.b`: byte units (×1). `add/sub %sp, imm10`: word units (×4). The byte offset from eliminateFrameIndex must be divided by the scale factor before encoding. gcc33 encodes `ld.w [%sp+0xd]` for byte offset 52 (13 words × 4).
@@ -246,22 +249,23 @@ This is distinct from the 2-operand immediate form `op %rd, sign6/imm6` where `%
 - **`*_sp` memory ops must be rewritten to `*_ri` when their FrameIndex needs a register** — A bare `load (frameindex)` is selected (via Pat) as the SP-relative `LDW_sp` etc., which is correct *only while the frame index stays a (Target)FrameIndex*. But if that same frame index is also used as a value — e.g. a byval struct whose later fields are reached via GEP — `Select(ISD::FrameIndex)` must materialise it into a register through `ADJFI`. `ReplaceNode(FI, ADJFI)` then drops the ADJFI *register* into the `LDW_sp` immediate slot, producing `ld.w %rd, [%sp+%rN]` — invalid; the encoder degrades it to `[%sp+0]` and reads an uninitialised slot. The fix (`S1C33ISelDAGToDAG.cpp`): when `Select(ISD::FrameIndex)` decides it needs an ADJFI, it first collects every already-selected `*_sp` user and rebuilds each as its register-indirect `*_ri` form (`spToRiOpcode` map) taking the ADJFI register. This was the odemaru `PDW_DrawBmp` alignment-exception bug: `dobj.src` (byval struct field 0) read `[%sp+0]`, became an odd pointer, and faulted the kernel's halfword read in `pceLCDDrawObject`. Regression test: `recv_byval_large` in `byval-struct.ll`.
 - **MinGlobalAlign=32 matches gcc33** — All global variables are aligned to at least 4 bytes. Without this, `const unsigned char[]` arrays (bitmap data) can land at odd addresses, causing unaligned access traps when SDK library code does halfword/word access on them. Set via `MinGlobalAlign=32` in the Clang target and `-a:0:32` in the data layout string.
 
-## SDK Library Link Order
+## Default Library Link Order
 
-Original P/ECE SDK convention (gcc33 era):
+Original P/ECE SDK convention (gcc33 era; for historical reference):
 ```
 crt0.o crti.o [user .o files]
 -lpceapi -lio -llib -lmath -lstring -lctype -lfp -lidiv
 ```
 
-**Current actual order (BareMetal.cpp; Phase 2 Stage A, 2026-04)**:
+**Current order (BareMetal.cpp; newlib Phase 2 Stage B, 2026-05)**:
 ```
 crt0.o crti.o [user .o files]
--lclang_rt.builtins-s1c33                 ← compiler-rt (replaces fp.lib / idiv.lib)
+-lclang_rt.builtins-s1c33                 ← compiler-rt (replaced fp.lib / idiv.lib)
 --start-group
-  -lcxxrt -lpceapi
-  -lc -lm                                  ← newlib libc / libm (Phase 2)
-  -lio -llib -lmath -lstring -lctype       ← EPSON SDK fallback (drop in Stage B)
+  -lcxxrt
+  -lpceapi                                 ← P/ECE kernel API stubs
+  -lpceshim                                ← rand/srand/__assert_func shims (avoid newlib's malloc/stdio cascade)
+  -lc -lm                                  ← newlib libc / libm
 --end-group
 ```
-Libraries not in this list (muslib etc) are not included by default; apps link them explicitly via `-lmuslib` etc.
+The gcc33-era `-lio -llib -lmath -lstring -lctype` were dropped in Stage B and the SRF→ELF conversion of these libraries is no longer performed by `tools/crt/Makefile`. Libraries not in this list (`-lmuslib`, `-lsimple`, `-lsprite`, `-ldefinst`) are not included by default; apps link them explicitly.

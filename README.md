@@ -17,24 +17,32 @@ Generates binaries ABI-compatible with the existing P/ECE SDK libraries.
 | ターゲット CPU | EPSON S1C33000 (S1C33209) — 32-bit RISC, 16-bit fixed-width instructions |
 | ターゲットデバイス | Aquaplus P/ECE |
 | トリプル | `s1c33-none-elf` |
-| ステータス | **Phase 6 完了 + compiler-rt / newlib Phase 1 完了** — 実機動作確認済み（2026-03/04） |
+| ステータス | **Phase 6 完了 + compiler-rt Phase 1 / newlib Phase 2 Stage B 完了 + simple/sprite ライブラリのソースビルド化完了** — 実機動作確認済み（2026-03〜05） |
 | ベース LLVM | llvm-project (サブモジュール, `llvm/` 以下) |
 
-P/ECE SDK の既製ライブラリ（`pceapi.lib` 等）は EPSON 独自の SRF33 形式で配布されています。
-それらはライセンス上このリポジトリ自体には含められないため、
-本リポジトリに含まれる `tools/srf2elf/` と `tools/crt/` Makefile がそれらを ELF 形式へ
-変換・再コンパイルし、`sysroot/` に配置します。
-浮動小数点演算・整数除算ランタイム（`fp.lib`, `idiv.lib`）は
-**LLVM compiler-rt** (`libclang_rt.builtins-s1c33.a`) で置き換え済みです。
-標準 C ヘッダは **newlib** サブモジュール（`newlib/`）から提供されます。
+P/ECE SDK のバイナリ配布ライブラリ群はすべて LLVM 上で再実装するかソースから再ビルドするよう移行済みです:
+- カーネル API スタブ (`pceapi.lib`) → **`tools/crt/gen_pceapi.py` がカーネル ROM のシンボルテーブル (`vector.h`) から関数スタブを自動生成**
+- 浮動小数点・整数除算 (`fp.lib`, `idiv.lib`) → **LLVM compiler-rt** (`libclang_rt.builtins-s1c33.a`)
+- 標準 C / 数学 (`lib.lib`, `math.lib`, `io.lib`, `string.lib`, `ctype.lib`) → **newlib** `libc.a` / `libm.a` (Phase 2 Stage B、2026-05)
+- シンプル / スプライト / 音楽 (`simple.lib`, `sprite.lib`, `muslib.lib`) → **`tools/{simple,sprite,muslib}/` の C/asm ソースからビルド**
 
-P/ECE SDK libraries (e.g. `pceapi.lib`) are distributed in EPSON's proprietary SRF33 format.
-They cannot be included in this repository due to licensing restrictions, so the
-`tools/srf2elf/` converter and `tools/crt/` Makefile translate them to ELF and install
-them into `sysroot/`.
-Floating-point and integer-division runtime (`fp.lib`, `idiv.lib`) have been
-**replaced by LLVM compiler-rt** (`libclang_rt.builtins-s1c33.a`).
-Standard C headers are provided by the **newlib** submodule (`newlib/`).
+これにより通常ビルドフロー (`make`、`make -C tools/crt`、`make -C tools/{simple,sprite,muslib}`) は EPSON SDK のバイナリ `.lib` を一切読みません。`tools/srf2elf/` は `make regen-builtins-asm` 開発時専用ターゲットでのみ使われ、compiler-rt が必要とする関数を `fp.lib` / `idiv.lib` から回収するためのアセンブリ抽出に用います。
+
+Every binary distribution library from the P/ECE SDK has been replaced by
+either an LLVM-side re-implementation or a from-source rebuild:
+- Kernel API stubs (`pceapi.lib`) → generated from the kernel ROM symbol
+  table (`vector.h`) by **`tools/crt/gen_pceapi.py`**.
+- Floating-point / integer division (`fp.lib`, `idiv.lib`) → **LLVM
+  compiler-rt** (`libclang_rt.builtins-s1c33.a`).
+- Standard C / math (`lib.lib`, `math.lib`, `io.lib`, `string.lib`,
+  `ctype.lib`) → **newlib** `libc.a` / `libm.a` (Phase 2 Stage B, 2026-05).
+- Simple / sprite / music (`simple.lib`, `sprite.lib`, `muslib.lib`) →
+  built from the C / asm sources under **`tools/{simple,sprite,muslib}/`**.
+
+As a result the regular build flow no longer reads any EPSON SDK `.lib`
+binary; `tools/srf2elf/` is exercised only by the manual
+`make regen-builtins-asm` developer target, which re-extracts assembly
+from `fp.lib` / `idiv.lib` to maintain compiler-rt's recovered builtins.
 
 ---
 
@@ -44,15 +52,21 @@ Standard C headers are provided by the **newlib** submodule (`newlib/`).
 
 The following applications have been verified on a real P/ECE device.
 
-| アプリ | ビルド方法 | 確認内容 |
+| アプリ (`app/` 配下) | ビルド方法 | 確認内容 |
 |---|---|---|
 | `mini_nocrt/` | crt0 手書き、手動リンク | 画面描画・ST+SL でメニュー復帰 |
 | `minimal/` | sysroot の crt0 + pceapi | 同上 |
-| `hello/` | EPSON SDK CRT 完全使用 | `printf` 表示・システムメニュー・メニュー復帰 |
-| `print/` | EPSON SDK CRT 完全使用 | `pceFontPutStr` 複数呼び出し・`pcesprintf` フォーマット |
-| `jien/` | EPSON SDK CRT + 描画ライブラリ | ビットマップ表示・構造体値渡し（`pceLCDDrawObject`） |
-| `fpkplay/` | EPSON SDK CRT + muslib + LZSS | FPK 音楽再生（8kHz/16kHz波形合成） |
-| `pmdplay/` | EPSON SDK CRT + muslib + PMD | PMD 音楽再生（複数楽曲切替・波形合成） |
+| `hello/` | sysroot CRT + newlib (`printf` 等) | `printf` 表示・システムメニュー・メニュー復帰 |
+| `jien/` | sysroot CRT + newlib + 描画ライブラリ | ビットマップ表示・構造体値渡し（`pceLCDDrawObject`） |
+| `fpkplay/` | sysroot CRT + libmuslib (ソースビルド) + LZSS | FPK 音楽再生（8kHz/16kHz波形合成） |
+| `cpptest/` | sysroot CRT + libcxxrt | C++ クラス・仮想関数・例外なし RTTI なし運用 |
+| `menu2/` | sysroot CRT + 旧 SDK 比較ベース | gcc33 とのバイナリ差分検証 |
+| `pcecircle/` | sysroot CRT + 描画 | 円描画 (gcc33 比較用) |
+
+加えて、本リポジトリには収録されていない外部アプリも実機動作確認済みです:
+
+- **BlackWings**（アクアプラスのアクション RPG 商用タイトル、配布物の著作権上リポジトリ非収録）— ゲーム全体の完走動作（ゲームループ・音楽・ステージ進行・セーブデータ）
+- **odemaru**（同上、リポジトリ非収録）— `libsimple` / `libsprite` のソースビルド版を使った完走動作（スプライトレンダリング・パッド入力・タイトル → ゲームプレイ → エンド）
 
 ---
 
@@ -71,19 +85,25 @@ llvm-c33/
 ├── sysroot/s1c33-none-elf/ ビルド済み sysroot（make -C tools/crt で生成）
 ├── tools/
 │   ├── crt/                crt0.c, libpceapi.a, libcxxrt.a 生成 Makefile
-│   ├── srf2elf/            SRF33 → ELF 変換ツール（Python）
+│   │   └── include/        SDK 由来ヘッダのローカル正本（s1c33cpu.h は LLVM 対応に書き換え）
+│   ├── simple/             シンプルライブラリのソースビルド（libsimple.a）
+│   ├── sprite/             スプライトライブラリのソースビルド（libsprite.a）
+│   ├── muslib/             音楽ライブラリのソースビルド（libmuslib.a）
+│   ├── pceshim/            newlib の rand/srand/__assert_func を上書きする軽量シム
+│   ├── srf2elf/            SRF33 → ELF 変換ツール（Python; 通常ビルドでは未使用、`make regen-builtins-asm` 開発時専用）
 │   ├── elf2srf/            ELF → SRF33 変換ツール（Python, 実験的）
 │   ├── ppack/              ELF → .pex パッケージャ（C++, cmake）
-│   ├── asm33conv/          EPSON as33 アセンブリ → LLVM IR コンバータ
+│   ├── asm33conv/          EPSON as33 拡張ニーモニック → LLVM 標準アセンブリ変換器
 │   └── piece.ld            P/ECE アプリ用リンカースクリプト
-├── hello/                  サンプルアプリ（EPSON SDK CRT 使用）
-├── print/                  サンプルアプリ（SDK 文字列描画）
-├── jien/                   サンプルアプリ（ビットマップ描画・構造体値渡し）
-├── fpkplay/                サンプルアプリ（FPK 音楽再生・LZSS 展開・波形合成）
-├── pmdplay/                サンプルアプリ（PMD 音楽再生・複数楽曲・波形合成）
-├── minimal/                サンプルアプリ（sysroot crt0 使用）
-├── mini_nocrt/             サンプルアプリ（crt0 手書き・最小構成）
-├── cpptest/                C++ 動作確認アプリ（例外なし RTTI なし）
+├── app/                    サンプルアプリ群（実機検証対象）
+│   ├── hello/              `printf` + システムメニュー復帰
+│   ├── jien/               ビットマップ描画・構造体値渡し
+│   ├── fpkplay/            FPK 音楽再生・LZSS 展開・波形合成
+│   ├── minimal/            sysroot crt0 使用の最小サンプル
+│   ├── mini_nocrt/         crt0 手書き・最小構成
+│   ├── cpptest/            C++ 動作確認（例外なし RTTI なし）
+│   ├── menu2/              メニュー (gcc33 比較用)
+│   └── pcecircle/          円描画（gcc33 比較用）
 ├── docs/
 │   ├── setup.md            セットアップ手順（← まずここを読む）
 │   ├── build-howto.md      アプリビルド手順
@@ -141,16 +161,20 @@ cd ..
 cd tools/ppack && cmake -G Ninja -B _build -DCMAKE_BUILD_TYPE=Release . && ninja -C _build
 cp _build/ppack ppack && cd ../..
 
-# 4. sysroot 一括ビルド（CRT + newlib ヘッダ + SDK ライブラリ変換）
-# Build sysroot: CRT objects + newlib headers + SDK library conversion
+# 4. sysroot 一括ビルド（CRT + newlib + compiler-rt + pceapi + muslib + pceshim）
+# Build sysroot: CRT + newlib + compiler-rt + pceapi + muslib + pceshim
 make -C tools/crt
 
-# 5. サンプルアプリをビルド / Build sample app
-cd hello && make
+# 5. シンプル / スプライトライブラリ (使うアプリ向け) / Optional libraries
+make -C tools/simple
+make -C tools/sprite
+
+# 6. サンプルアプリをビルド / Build sample app
+cd app/hello && make
 ```
 
-`hello/hello_l.pex` が生成されれば成功です。
-If `hello/hello_l.pex` is produced, the toolchain is working.
+`app/hello/hello_l.pex` が生成されれば成功です。
+If `app/hello/hello_l.pex` is produced, the toolchain is working.
 
 ---
 
@@ -165,19 +189,18 @@ See [`docs/build-howto.md`](docs/build-howto.md) for full instructions.
 ```sh
 # コンパイル＋リンク / Compile + link
 build/bin/clang \
-    --target=s1c33-none-elf \
     --sysroot=sysroot/s1c33-none-elf \
-    -O2 -Wno-incompatible-library-redeclaration \
+    -O2 \
     myapp.c -o myapp.elf
 
 # .pex パッケージ生成 / Generate .pex package
 tools/ppack/ppack -e myapp.elf -omyapp.pex -n"My App"
 ```
 
-`clang` は自動的に crt0.o / piece.ld / `-lclang_rt.builtins-s1c33 -lcxxrt -lpceapi -lio -llib -lmath -lstring -lctype` を追加します。
+`clang` は自動的に crt0.o / piece.ld / `-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lpceshim -lc -lm --end-group` を追加します。
 
 `clang` automatically adds crt0.o, piece.ld, and
-`-lclang_rt.builtins-s1c33 -lcxxrt -lpceapi -lio -llib -lmath -lstring -lctype`.
+`-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lpceshim -lc -lm --end-group`.
 
 ### アプリケーションが実装するコールバック / Application Callbacks
 
@@ -203,9 +226,10 @@ void pceAppExit(void)    { /* called at termination  */ }
 - **crt0** — `pceAPPHEAD` 構造体配置・BSS ゼロクリア・バージョンチェック・コールバックラッパー
 - **libpceapi** — カーネル API スタブ自動生成（`gen_pceapi.py` + `vector.h`）
 - **compiler-rt** — 浮動小数点・整数除算・64bit 整数演算ランタイム (`libclang_rt.builtins-s1c33.a`)。fp.lib/idiv.lib を完全置き換え
-- **newlib ヘッダ** — 標準 C ヘッダ（`<string.h>`, `<stdlib.h>` 等）を newlib から提供。P/ECE 固有ヘッダとの共存対応
+- **newlib** — 標準 C ヘッダ + `libc.a` / `libm.a` 本体（`printf` / `malloc` / `sin` / `strtod` / `setjmp` 等）。`lib.lib` / `math.lib` / `io.lib` / `string.lib` / `ctype.lib` を完全置き換え（Phase 2 Stage B、2026-05）
+- **simple / sprite / muslib ソースビルド** — シンプル・スプライト・音楽ライブラリは `tools/{simple,sprite,muslib}/` 配下の C/asm ソースから LLVM でビルド。asm ソースは `tools/asm33conv/` で as33 拡張ニーモニックを LLVM 標準命令に展開してからアセンブル
 - **C++ サポート** — `libcxxrt.a` による `__cxa_*` スタブ・`operator new/delete`（`-fno-exceptions -fno-rtti` 前提）
-- **SRF33 変換** — EPSON 独自形式 SDK ライブラリを ELF/GNU ar 形式へ変換
+- **`libpceapi.a` のソース生成** — カーネル ROM シンボルテーブル `vector.h` から `tools/crt/gen_pceapi.py` がスタブを自動生成（`pceapi.lib` の SRF33 変換は不要）
 - **構造体値渡し (byval)** — §6.5.4 準拠、全メンバをスタック経由で渡す（レジスタ不使用）
 
 ---
@@ -213,8 +237,7 @@ void pceAppExit(void)    { /* called at termination  */ }
 ## 既知の制限 / Known Limitations
 
 - **P/ECE 専用** — 汎用 S1C33 ターゲット向けクロスコンパイルには未対応箇所あり
-- **GP 最適化未実装** — R8 はカーネル ABI 規約（R8=0x0）を尊重して Reserved のみ
-- **lib.lib のバグ関数** — sin()/strtok()/pow()/strtod()/ispunct() は EPSON 純正実装のまま（newlib Phase 2 で置き換え予定）
+- **MIPS スタイルの可変 GP 最適化は未実装** — R8 はカーネル ABI 規約（R8=0x0）により Reserved 扱い (アロケータ非対象)。一方で `R8 == 0` という事実は最適化材料として活用しており、グローバルへの load/store は `ext sym@ah / ext sym@al / ld.* [%r8]` の 6 バイト形式に畳み込まれる (R8 を可変な `.sdata` 起点として扱うわけではない)
 - **`jp.d %rb` 禁止** — ハードウェアバグのため使用しない（詳細: `docs/errata.md`）
 
 ---
@@ -242,10 +265,26 @@ Reference materials in `docs/` (Japanese PDFs):
 ## P/ECE SDK について / About the P/ECE SDK
 
 P/ECE SDK（`sdk/`）は **このリポジトリには含まれていません**。
-別途入手してリポジトリルートに配置してください。
+
+**ビルドフローは P/ECE SDK を必要としません** — `make -C tools/crt` で sysroot を構築し、`make -C tools/{simple,sprite}` でライブラリをビルドし、`app/<sample>` で `.pex` を生成するところまで、ホスト上で完結します（カーネル API スタブは `gen_pceapi.py`、標準 C/数学は newlib、シンプル/スプライト/音楽は `tools/{simple,sprite,muslib}/` のソース、浮動小数点・整数除算は compiler-rt が供給）。
+
+SDK が必要になるのは以下の用途のみ:
+
+- 生成した `.pex` を **実機 P/ECE に転送して動作させる**（純正の P/ECE SDK 付属の転送ツールおよびホスト USB ドライバが必要）
+- 開発時専用の `make regen-builtins-asm` ターゲットで `fp.lib` / `idiv.lib` のアセンブリを回収する（compiler-rt の S1C33 builtins を再生成するためのメンテナンス作業。常用しない）
+
+これらを必要としない場合、リポジトリ直下に `sdk/` を配置する必要はありません。
 
 The P/ECE SDK (`sdk/`) is **not included** in this repository.
-Obtain it separately and place it at the repository root.
+
+**The build flow does not require the P/ECE SDK** — `make -C tools/crt` builds the sysroot, `make -C tools/{simple,sprite}` builds the libraries, and `app/<sample>` builds a `.pex` entirely on the host (kernel API stubs come from `gen_pceapi.py`, standard C / math from newlib, simple / sprite / music from sources under `tools/{simple,sprite,muslib}/`, and FP / integer division from compiler-rt).
+
+The SDK is only needed for:
+
+- **Transferring a `.pex` to a real P/ECE unit** (which requires the EPSON SDK's transfer tool and host USB driver).
+- The developer-only `make regen-builtins-asm` target, which extracts assembly from `fp.lib` / `idiv.lib` to refresh compiler-rt's S1C33 builtins. This is a one-shot maintenance task, not part of regular builds.
+
+If neither of these applies, you don't need to drop a `sdk/` tree at the repository root.
 
 ---
 

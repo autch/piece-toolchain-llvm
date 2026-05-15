@@ -31,15 +31,20 @@ llvm-c33/
 │           ├── crti.o                        pceAppNotify デフォルト実装（LLVM ビルド）
 │           ├── libclang_rt.builtins-s1c33.a  compiler-rt（FP・整数除算ランタイム）
 │           ├── libcxxrt.a                    C++ ランタイムスタブ（operator new/delete 等）
-│           ├── libstring.a                   文字列・メモリ操作
-│           ├── liblib.a                      P/ECE 標準ライブラリ（malloc/atoi 等）
 │           ├── libpceapi.a                   P/ECE カーネル API スタブ（LLVM ビルド）
-│           └── libctype.a                    文字種判別
+│           ├── libpceshim.a                  rand/srand/__assert_func シム
+│           ├── libc.a, libm.a                newlib 標準 C/数学
+│           ├── libmuslib.a                   音楽ライブラリ（tools/muslib/ ソースからビルド）
+│           ├── libsimple.a, libdefinst.a     シンプルライブラリ（tools/simple/ ソースからビルド）
+│           └── libsprite.a                   スプライトライブラリ（tools/sprite/ ソースからビルド）
 ├── tools/
 │   ├── piece.ld        リンカースクリプト（sysroot へコピー済み）
 │   ├── ppack/          ppack ツール（ELF → .pex パッケージャ）
-│   ├── muslib/         音楽ライブラリ（ソースからビルド）
-│   └── srf2elf/        SRF→ELF 変換ツール
+│   ├── muslib/         音楽ライブラリのソース
+│   ├── simple/         シンプルライブラリのソース
+│   ├── sprite/         スプライトライブラリのソース
+│   ├── asm33conv/      as33 拡張ニーモニック → 標準 LLVM アセンブリ変換器
+│   └── srf2elf/        SRF→ELF 変換ツール（regen-builtins-asm 専用、通常ビルドでは未使用）
 └── app/                サンプルアプリ（hello, jien, pmdplay, BlackWings, ...）
 ```
 
@@ -47,30 +52,32 @@ llvm-c33/
 
 ## 1. sysroot の構築（初回のみ）
 
-標準 C ヘッダ（newlib）と P/ECE 固有ヘッダ、SDK ライブラリをすべてまとめてビルドする。
-SDK を更新しない限り再実行不要。
+標準 C ヘッダ（newlib）と P/ECE 固有ヘッダ、ランタイムライブラリをすべてまとめてビルドする。
+ヘッダ・ライブラリの内容を変更しない限り再実行不要。
 
 ```sh
-# CRT・カーネル API スタブのビルド + newlib ヘッダのインストール + SDK ライブラリの SRF→ELF 変換（一括）
+# CRT・カーネル API スタブのビルド + newlib ヘッダのインストール + 各ライブラリのソースビルド（一括）
 make -C tools/crt
 ```
 
 この 1 コマンドで以下がすべて自動的に実行される：
 
 1. newlib サブモジュールから標準 C ヘッダを sysroot にインストール
-2. P/ECE 固有ヘッダ（`piece.h`、`draw.h` 等）を `sdk/include/` からコピー
+2. P/ECE 固有ヘッダ（`piece.h`、`draw.h` 等）を `tools/crt/include/` からコピー
 3. Clang 組み込みと競合するヘッダ（`stddef.h`、`stdarg.h`、`float.h`）を除去
 4. `crt0.o`・`crti.o`・`libpceapi.a` を LLVM でビルド
-5. `libclang_rt.builtins-s1c33.a`（compiler-rt）を cmake でビルド
+5. `libclang_rt.builtins-s1c33.a`（compiler-rt; fp.lib/idiv.lib の後継）を cmake でビルド
 6. newlib の `libc.a` / `libm.a` を S1C33 向けにビルド
-7. SDK ライブラリを SRF33 → ELF に変換（Stage A フォールバック）
-8. `libmuslib.a`（`tools/muslib/` のソースからビルド）と `libpceshim.a`（newlib シム）をビルド
+7. `libmuslib.a`（音楽）と `libpceshim.a`（newlib シム）をソースからビルド
 
-音楽ライブラリ `libmuslib.a` は `tools/muslib/` のソースから LLVM でビルドされ、この `make -C tools/crt` で sysroot に自動インストールされる（旧来の `srf2elf` による SDK SRF からの変換は廃止）。スプライトライブラリ `libsprite.a` は自動変換対象外なので、使う場合は個別に変換する：
+シンプルライブラリ `libsimple.a` とスプライトライブラリ `libsprite.a` は `tools/simple/` と `tools/sprite/` で個別に `make` する：
 
 ```sh
-python3 tools/srf2elf/srf2elf.py sdk/lib/sprite.lib sysroot/s1c33-none-elf/lib/libsprite.a
+make -C tools/simple   # libsimple.a + libdefinst.a を sysroot へインストール
+make -C tools/sprite   # libsprite.a を sysroot へインストール
 ```
+
+両ライブラリは `tools/asm33conv/asm33conv.py` を経由して `.s` ファイル内の as33 拡張ニーモニックを LLVM 標準命令に展開してからアセンブルする。
 
 ### sysroot に含まれるファイルの内容
 
@@ -88,12 +95,11 @@ python3 tools/srf2elf/srf2elf.py sdk/lib/sprite.lib sysroot/s1c33-none-elf/lib/l
 -lclang_rt.builtins-s1c33
 --start-group
   -lcxxrt -lpceapi -lpceshim
-  -lc -lm                          ← newlib (Phase 2)
-  -lio -llib -lmath -lstring -lctype  ← EPSON SDK fallback (Stage A)
+  -lc -lm                          ← newlib
 --end-group
 ```
 
-newlib (`-lc -lm`) が EPSON SDK ライブラリより先に置かれているため、両方が同名のシンボル (例: `printf`, `malloc`, `sin`) を提供する場合は **newlib が優先** されます。EPSON SDK 側はフォールバックとして残置されており、newlib に未実装のシンボル (`pceapi` 経由の特殊関数等) を埋めます。`libpceshim.a` は `-lc` の前に置かれ、newlib の `rand` / `srand` / `__assert_func` を小型の単一スレッド版で上書きしてバイナリサイズを削減します。
+`libpceshim.a` は `-lc` の前に置かれ、newlib の `rand` / `srand` / `__assert_func` を小型の単一スレッド版で上書きしてバイナリサイズを削減します。`-lc -lm` (newlib) が標準 C/数学関数の全シンボル (`printf`, `malloc`, `sin`, `strtok`, ...) を供給します。
 
 | ライブラリ | 提供元 | 主な提供シンボル |
 |---|---|---|
@@ -101,22 +107,18 @@ newlib (`-lc -lm`) が EPSON SDK ライブラリより先に置かれている�
 | `libcxxrt.a` | `tools/crt/cxxrt.c` 等（LLVM ビルド） | `operator new/delete`、`__cxa_pure_virtual` 等 C++ ランタイム |
 | `libpceapi.a` | `tools/crt/gen_pceapi.py`（LLVM ビルド） | `pceLCDTrans`、`pcePadGet` 等 カーネル API スタブ |
 | `libpceshim.a` | `tools/pceshim/`（LLVM ビルド） | newlib の `rand` / `srand` / `__assert_func` を小型の単一スレッド版で上書き（バイナリ縮小用シム） |
-| **`libc.a`** | **newlib (`newlib/`、tools/crt/Makefile でビルド)** | **`printf`、`malloc`、`strtod`、`strtok`、`setjmp`、`atoi`、`rand` 等 ANSI C 標準** |
-| **`libm.a`** | **newlib (同上)** | **`sin`、`cos`、`pow`、`sqrt`、`atan2`、`exp`、`log`、`fabs`、`fmod` 等 数学関数** |
-| `libio.a` | `io.lib`（SRF→ELF 変換） | (Stage A フォールバック) `printf`、`scanf`、`fopen` 等 I/O |
-| `liblib.a` | `lib.lib`（SRF→ELF 変換） | (Stage A フォールバック) `malloc`、`atoi`、`rand` 等 |
-| `libmath.a` | `math.lib`（SRF→ELF 変換） | (Stage A フォールバック) `sin`、`cos`、`sqrt` 等 |
-| `libstring.a` | `string.lib`（SRF→ELF 変換） | (Stage A フォールバック) `memset`、`memcpy`、`strlen` 等 |
-| `libctype.a` | `ctype.lib`（SRF→ELF 変換） | (Stage A フォールバック) `isalpha`、`isdigit`、`tolower` 等 |
+| `libc.a` | newlib (`newlib/` サブモジュール、tools/crt/Makefile でビルド) | `printf`、`malloc`、`strtod`、`strtok`、`setjmp`、`atoi`、`rand`、`memset`、`memcpy`、`strlen`、`isalpha`、`isdigit`、`tolower` 等 ANSI C 標準 |
+| `libm.a` | newlib（同上） | `sin`、`cos`、`pow`、`sqrt`、`atan2`、`exp`、`log`、`fabs`、`fmod` 等 数学関数 |
 
-> **Phase 2 newlib 移行のステージ**: 現状は **Stage A** (newlib + EPSON SDK 並列リンク、newlib 優先)。Stage B (EPSON SDK 全削除) は全アプリの実機検証完了後に予定。アプリ作者は `-lc` 経由で newlib に切り替わったことを通常意識する必要はありません — 既知の EPSON `lib.lib` バグ (sin / pow / strtod / strtok / ispunct) は自動的に newlib 版で動作します。
+> **newlib Phase 2 完了 (2026-05)**: Stage A (newlib と gcc33 era SDK ライブラリの並列リンク、newlib 優先) を経て Stage B が完了し、gcc33 era の `libio.a / liblib.a / libmath.a / libstring.a / libctype.a` (SRF→ELF 変換版) はリンク行から外され、sysroot にも生成されなくなりました。既知の EPSON `lib.lib` バグ (sin / pow / strtod / strtok / ispunct) は newlib 版で解消済み。
 
 **オプションライブラリ（明示指定のみ）：**
 
 | ライブラリ | ビルド元 | 使い方 |
 |---|---|---|
-| `libmuslib.a` | `tools/muslib/`（ソースから LLVM ビルド、`make` で自動） | 音楽再生ライブラリ（`-lmuslib` で指定） |
-| `libsprite.a` | `sdk/lib/sprite.lib`（`srf2elf` で手動変換） | スプライト描画（`-lsprite` で指定） |
+| `libmuslib.a` | `tools/muslib/`（ソースから LLVM ビルド、`make -C tools/crt` で自動） | 音楽再生ライブラリ（`-lmuslib` で指定） |
+| `libsimple.a` / `libdefinst.a` | `tools/simple/`（ソースから LLVM ビルド、`make -C tools/simple` で生成） | シンプルライブラリ（`-lsimple` で指定） |
+| `libsprite.a` | `tools/sprite/`（ソースから LLVM ビルド、`make -C tools/sprite` で生成。`tools/asm33conv/` で as33 拡張ニーモニックを展開） | スプライト描画（`-lsprite` で指定） |
 
 ---
 
@@ -143,7 +145,6 @@ void pceAppExit(void)    { /* 終了時に1回呼ばれる */ }
 build/bin/clang \
     --sysroot=sysroot/s1c33-none-elf \
     -O2 \
-    -Wno-incompatible-library-redeclaration \
     -c hello.c -o hello.o
 ```
 
@@ -151,7 +152,6 @@ build/bin/clang \
 |---|---|
 | `--sysroot=sysroot/s1c33-none-elf` | ヘッダとライブラリのルートを指定 |
 | `-O2` | 最適化レベル（`-O0` でデバッグ用） |
-| `-Wno-incompatible-library-redeclaration` | SDK の stdlib.h 再宣言警告を抑制 |
 | `-c` | オブジェクトファイル生成（リンクしない） |
 
 `--sysroot` を指定すると `sysroot/s1c33-none-elf/include` が自動的に
@@ -233,7 +233,6 @@ build/bin/clang \
 build/bin/clang \
     --sysroot=sysroot/s1c33-none-elf \
     -O2 \
-    -Wno-incompatible-library-redeclaration \
     hello.c -o hello.elf
 
 # .o をまとめてリンク
@@ -247,7 +246,7 @@ clang は自動的に以下を行う：
 - `-m elf32ls1c33` エミュレーション指定
 - `sysroot/s1c33-none-elf/lib/crt0.o` をスタートアップとして追加
 - `sysroot/s1c33-none-elf/lib/piece.ld` をデフォルトリンカースクリプトとして使用
-- `-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lpceshim -lc -lm -lio -llib -lmath -lstring -lctype --end-group` を自動リンク
+- `-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lpceshim -lc -lm --end-group` を自動リンク
 
 `-nostdlib` を指定するとスタートアップもライブラリも追加されない（手動リンク用）。
 
@@ -264,7 +263,7 @@ build/bin/ld.lld \
     -L build/lib/clang/22/lib/s1c33-unknown-none-elf \
     -lclang_rt.builtins-s1c33 \
     --start-group \
-    -lcxxrt -lpceapi -lpceshim -lc -lm -lio -llib -lmath -lstring -lctype \
+    -lcxxrt -lpceapi -lpceshim -lc -lm \
     --end-group \
     -o hello.elf
 ```
@@ -362,7 +361,7 @@ hd hello.pex | head -2
 # コンパイル＋リンク＋.pex 生成（最小コマンド数）
 build/bin/clang \
     --sysroot=sysroot/s1c33-none-elf \
-    -O2 -Wno-incompatible-library-redeclaration \
+    -O2 \
     hello.c -o hello.elf
 
 tools/ppack/ppack -e hello.elf -ohello.pex -n"Hello World"
@@ -372,9 +371,9 @@ tools/ppack/ppack -e hello.elf -ohello.pex -n"Hello World"
 
 ```sh
 build/bin/clang --sysroot=sysroot/s1c33-none-elf \
-    -O2 -Wno-incompatible-library-redeclaration -c main.c -o main.o
+    -O2 -c main.c -o main.o
 build/bin/clang --sysroot=sysroot/s1c33-none-elf \
-    -O2 -Wno-incompatible-library-redeclaration -c sub.c  -o sub.o
+    -O2 -c sub.c  -o sub.o
 
 build/bin/clang --sysroot=sysroot/s1c33-none-elf \
     main.o sub.o -o hello.elf
@@ -391,27 +390,28 @@ tools/ppack/ppack -e hello.elf -ohello.pex -n"Hello World"
 sysroot が構築されていないか、`--sysroot` が指定されていない。
 §1 の手順で sysroot を構築してから `--sysroot=sysroot/s1c33-none-elf` を指定する。
 
-ライブラリとシンボルの対応 (Phase 2 / Stage A 時点):
+ライブラリとシンボルの対応 (newlib Phase 2 Stage B 完了後):
 
-| シンボル | 提供元 (優先順) |
+| シンボル | 提供元 |
 |---|---|
-| `pceLCDTrans`, `pcePadGet` 等 | `libpceapi.a`（`pceapi.lib` から変換） |
-| `printf`, `sprintf`, `vfprintf` 等 stdio | **`libc.a` (newlib)** → fallback `libio.a` |
-| `malloc`, `free`, `realloc`, `calloc` | **`libc.a` (newlib nano-malloc)** → fallback `liblib.a` |
-| `atoi`, `strtol`, `strtod`, `rand` 等 | **`libc.a` (newlib)** → fallback `liblib.a` |
-| `sin`, `cos`, `pow`, `sqrt`, `atan2` 等 | **`libm.a` (newlib)** → fallback `libmath.a` |
-| `memset`, `memcpy`, `strlen`, `strcpy` 等 | **`libc.a` (newlib)** → fallback `libstring.a` |
-| `isalpha`, `tolower`, `isdigit` 等 | **`libc.a` (newlib)** → fallback `libctype.a` |
-| `setjmp`, `longjmp` | **`libc.a` (newlib `libc/machine/s1c33/`)** |
-| `_sbrk`, `_write`, `_exit` 等 syscall stub | **`libc.a` (newlib `libc/sys/s1c33/`)** |
+| `pceLCDTrans`, `pcePadGet` 等 | `libpceapi.a`（`gen_pceapi.py` + `vector.h` から自動生成） |
+| `printf`, `sprintf`, `vfprintf` 等 stdio | `libc.a` (newlib) |
+| `malloc`, `free`, `realloc`, `calloc` | `libc.a` (newlib nano-malloc) |
+| `atoi`, `strtol`, `strtod`, `rand` 等 | `libc.a` (newlib) |
+| `sin`, `cos`, `pow`, `sqrt`, `atan2` 等 | `libm.a` (newlib) |
+| `memset`, `memcpy`, `strlen`, `strcpy` 等 | `libc.a` (newlib) |
+| `isalpha`, `tolower`, `isdigit` 等 | `libc.a` (newlib) |
+| `setjmp`, `longjmp` | `libc.a` (newlib `libc/machine/s1c33/`) |
+| `_sbrk`, `_write`, `_exit` 等 syscall stub | `libc.a` (newlib `libc/sys/s1c33/`) |
 | `__addsf3`, `__mulsf3`, `__fixsfdi` 等（float） | `libclang_rt.builtins-s1c33.a`（compiler-rt） |
 | `__divsi3`, `__modsi3`, `__divdi3` 等（除算） | `libclang_rt.builtins-s1c33.a`（compiler-rt） |
+| `rand`, `srand`, `__assert_func`（shim） | `libpceshim.a`（newlib 版をシャドウ） |
 
 ### `mlt.w: instruction requires a CPU feature not currently enabled`
 
 アセンブル時に `--mcpu` が `s1c33`（基本コア）になっている。
 P/ECE 向けには `--mcpu=s1c33209`（デフォルト）のままにすること。
-`clang --target=s1c33-none-elf` は自動的に `s1c33209` を使うため、
+`clang`（既定で `s1c33-none-elf` ターゲット）は自動的に `s1c33209` を使うため、
 通常はこのエラーは発生しない。`llvm-mc` や `clang -mcpu=s1c33` を
 明示した場合にのみ起こる。
 

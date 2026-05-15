@@ -13,7 +13,7 @@
 | CMake | 3.13 以上 | LLVM・ppack のビルド設定 |
 | Ninja | 任意 | LLVM のビルド実行 |
 | C/C++ コンパイラ | GCC 7 / Clang 6 以上 | LLVM・ppack のホストコンパイル |
-| Python 3 | 3.6 以上 | `srf2elf.py` による SDK 変換 |
+| Python 3 | 3.6 以上 | `gen_pceapi.py` (libpceapi スタブ生成)・`asm33conv.py` (シンプル/スプライト ライブラリの asm 変換) ほか |
 | zlib 開発ヘッダ | 任意 | ppack のリンク依存 |
 | iconv | GNU libc 標準 | tools/crt/ 内 UTF-8 ソースの SJIS 変換 (使う場合のみ) |
 | autoconf 2.69 / automake 1.15.1 | 厳密一致 | newlib の `configure` / `Makefile.in` 再生成 (滅多に使わない) |
@@ -128,12 +128,12 @@ make -C tools/crt
 以下が自動的に実行される：
 
 1. `newlib/newlib/libc/include/` から標準 C ヘッダを `sysroot/s1c33-none-elf/include/` にインストール
-2. `sdk/include/` から P/ECE 固有ヘッダ（`piece.h`、`draw.h` 等）をコピー
-3. Clang 組み込みと競合するヘッダ（`stddef.h`、`stdarg.h`、`float.h`）を除去
-4. `crt0.o`・`crti.o`・`libpceapi.a` を LLVM でビルド
-5. `libclang_rt.builtins-s1c33.a`（compiler-rt）を cmake でビルド
-6. **newlib の `libc.a` / `libm.a` を S1C33 向けにビルド** (`build/crt/newlib/` 内で `configure` + `make`)
-7. SDK ライブラリを SRF33 → ELF に変換 (Stage A: 並列リンク用フォールバック)
+2. `tools/crt/include/` から P/ECE 固有ヘッダ（`piece.h`、`draw.h`、`s1c33cpu.h` 等）をコピー (オリジナルは `sdk/include/` だが、ビルドからは参照しない reference material 化済み)
+3. `tools/sprite/pclsprite.h` と `tools/simple/{simple,thread}.h` をシンボリックな canonical 元としてコピー
+4. Clang 組み込みと競合するヘッダ（`stddef.h`、`stdarg.h`、`float.h`）を除去
+5. `crt0.o`・`crti.o`・`libpceapi.a` を LLVM でビルド
+6. `libclang_rt.builtins-s1c33.a`（compiler-rt; fp.lib/idiv.lib の後継）を cmake でビルド
+7. **newlib の `libc.a` / `libm.a` を S1C33 向けにビルド** (`build/crt/newlib/` 内で `configure` + `make`)
 8. `libmuslib.a`（音楽ライブラリ、`tools/muslib/` のソースからビルド）と `libpceshim.a`（newlib の `rand` / `__assert_func` を小型版で上書きするシム）をビルド・インストール
 
 初回ビルドは newlib のフルビルドに数分かかる。以降は差分ビルドで `tools/crt/` 内の変更のみ再ビルドされる。
@@ -147,27 +147,27 @@ make -C tools/crt
 | `sysroot/s1c33-none-elf/lib/libpceapi.a` | カーネル API スタブ + ユーティリティ |
 | `sysroot/s1c33-none-elf/lib/libclang_rt.builtins-s1c33.a` | compiler-rt（FP 演算・整数除算・i64 算術ランタイム） |
 | `sysroot/s1c33-none-elf/lib/libcxxrt.a` | C++ ランタイムスタブ（operator new/delete 等） |
-| `sysroot/s1c33-none-elf/lib/libc.a` | **newlib libc** (Phase 2; printf / malloc / strtod / setjmp / 等) |
-| `sysroot/s1c33-none-elf/lib/libm.a` | **newlib libm** (Phase 2; sin / cos / pow / sqrt / 等) |
-| `sysroot/s1c33-none-elf/lib/lib{io,lib,math,string,ctype}.a` | SDK ライブラリ（SRF33 → ELF 自動変換）— Stage A 中はフォールバックとして残置 |
+| `sysroot/s1c33-none-elf/lib/libc.a` | newlib libc (printf / malloc / strtod / setjmp / 等) |
+| `sysroot/s1c33-none-elf/lib/libm.a` | newlib libm (sin / cos / pow / sqrt / 等) |
 | `sysroot/s1c33-none-elf/lib/piece.ld` | リンカスクリプト (P/ECE メモリマップ + ヒープ配置) |
 
-> **Phase 2 (newlib 対応) について**: 既知の EPSON SDK バグ (`sin`, `strtok`, `pow`, `strtod`, `ispunct`) を持つ `lib.lib` / `math.lib` 等を newlib で置き換える段階的移行を進めています。現状は **Stage A** (newlib を優先、SDK ライブラリをフォールバック) で動作中。`-lc -lm` がリンカ順で `-lio -llib -lmath -lstring -lctype` の前に置かれ、newlib にあるシンボルは newlib が勝ちます。詳細は `docs/build-howto.md` の「リンク順序」節を参照。
+> **newlib Phase 2 完了 (2026-05)**: 既知の EPSON SDK バグ (`sin`, `strtok`, `pow`, `strtod`, `ispunct`) を持つ `lib.lib` / `math.lib` 等は newlib で完全に置き換え済み。Stage A (newlib と SDK 並列リンク) と Stage B (SDK ライブラリ完全削除) を経て、現在のリンク行は `-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lpceshim -lc -lm --end-group` のみ。詳細は `docs/build-howto.md` の「リンク順序」節を参照。
 
 > **注意:** `crt0.o` は `-O1` でコンパイルされる。BSS ゼロクリアループの
 > カウンタ変数が `[SP+0]` に置かれると、カーネルが SP を bss_end に設定した場合に
 > ループが自分のカウンタを上書きしてしまうため、`-O0` でのビルドは禁止。
 > Makefile の `CFLAGS_CRT` は `-O1` が設定されており、変更しないこと。
 
-音楽ライブラリ `libmuslib.a` は `tools/muslib/` のソースから LLVM でビルドされ、上記 `make -C tools/crt` で sysroot に自動インストールされる（旧来の `srf2elf` による SDK SRF からの変換は廃止）。
+音楽ライブラリ `libmuslib.a` は `tools/muslib/` のソースから LLVM でビルドされ、上記 `make -C tools/crt` で sysroot に自動インストールされる。
 
-スプライトライブラリ `libsprite.a` は自動変換対象外。使用する場合は個別に変換する：
+シンプル / スプライトライブラリ (`libsimple.a` / `libsprite.a`) は各々のソースディレクトリで個別に make する：
 
 ```sh
-python3 tools/srf2elf/srf2elf.py sdk/lib/sprite.lib sysroot/s1c33-none-elf/lib/libsprite.a
+make -C tools/simple
+make -C tools/sprite
 ```
 
-どちらもアプリ側で `-lmuslib` / `-lsprite` を明示指定してリンクする。
+どちらも `tools/asm33conv/asm33conv.py` を経由して `.s` ファイル中の as33 拡張ニーモニックを LLVM 標準命令に展開する。アプリ側で `-lmuslib` / `-lsimple` / `-lsprite` を明示指定してリンクする。
 
 ### sysroot 完成後の確認
 
@@ -180,17 +180,18 @@ ls sysroot/s1c33-none-elf/lib/
 ```
 crt0.o  crti.o  piece.ld
 libclang_rt.builtins-s1c33.a
-libc.a      libm.a                              ← newlib (Phase 2)
-libcxxrt.a  libpceapi.a  libpceshim.a
+libc.a      libm.a                              ← newlib
+libcxxrt.a  libpceapi.a  libpceshim.a           ← C++ ランタイム + カーネル API + newlib シム
 libmuslib.a                                     ← 音楽ライブラリ (-lmuslib で明示指定)
-libctype.a  libio.a  liblib.a  libmath.a  libstring.a   ← SDK fallback
+libsimple.a libdefinst.a                        ← シンプルライブラリ (-lsimple で明示指定; make -C tools/simple で生成)
+libsprite.a                                     ← スプライトライブラリ (-lsprite で明示指定; make -C tools/sprite で生成)
 ```
 
 ---
 
 ## 5. 動作確認
 
-サンプルアプリは `app/` 以下に集約されている（`app/hello/`、`app/jien/`、`app/pmdplay/` など）。
+サンプルアプリは `app/` 以下に集約されている（`app/hello/`、`app/jien/`、`app/fpkplay/` など）。
 
 ```sh
 cd app/hello

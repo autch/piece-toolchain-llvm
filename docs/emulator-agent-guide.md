@@ -206,7 +206,7 @@ LD=$C33HOME/build/bin/ld.lld
 SYSROOT=$C33HOME/sysroot/s1c33-none-elf
 
 # コンパイル
-$CC --target=s1c33-none-elf --sysroot=$SYSROOT \
+$CC --sysroot=$SYSROOT \
     -O1 -ffreestanding -fno-builtin \
     -c test_foo.c -o test_foo.o
 

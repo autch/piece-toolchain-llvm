@@ -56,13 +56,14 @@ round-trip が壊れるため対応不要。
 
 `analyzeBranch` / `insertBranch` / `removeBranch` / `reverseBranchCondition` を実装。BranchFolder パスが条件反転+フォールスルーに変換するようになった。
 
-### 5. GP最適化（対応方針確定）
+### 5. GP最適化（対応方針確定 + R8 ベース絶対アドレッシング実装済み）
 
-**ユーザアプリ向け GP 最適化は実装しない。** R8 はカーネルが 0x0 にセットする「カーネルジャンプテーブルベースポインタ」として使用される。pceapi スタブは `ext N / ld.w %r9, [%r8]` でカーネル関数ポインタを取得する。
+**MIPS スタイルの可変 GP 最適化は実装しない。** R8 はカーネルが 0x0 にセットする「カーネルジャンプテーブルベースポインタ」として使用される。pceapi スタブは `ext N / ld.w %r9, [%r8]` でカーネル関数ポインタを取得する。
 
 - R8 は Reserved（レジスタアロケータが割り付けない）として実装済み ✓
 - ユーザコンパイルコードが R8 を変更しないことはこれで保証される ✓
-- MIPSスタイルの「R8 = ユーザ .sdata ポインタ + [R8+offset] で GlobalAddress を解決する」最適化は**不要かつ実装しない**
+- MIPS スタイルの「R8 = ユーザ .sdata ポインタ + [R8+offset] で GlobalAddress を解決する」最適化は**不要かつ実装しない**
+- **`R8 == 0` の事実を最適化材料として利用 ✓**（commit `08608bab3ac0`、2026-04-24）: グローバル load/store を `ext sym@ah / ext sym@al / ld.* [%r8]` の 6 バイト形式に畳み込む。26-bit 絶対アドレスを ext 2 個 (bits[25:13]/bits[12:0]) に分割。`*_ABS` 擬似命令 + `S_ABS_AH/AL` MC specifier + `R_S1C33_REL_AH/AL` relocation + `FeatureR8AbsGlobal` SubtargetFeature (デフォルト on、`-mattr=-r8-abs` で旧来形式フォールバック)。menu2 で `.pex` -30 バイト、gcc33 比 +9.4% → +8.5%。
 - **将来のカーネルコンパイル対応**: カーネルのブートコード（リセットハンドラ）がアセンブリで `ld.w %r8, 0`（または `ld.w %r8, kernel_table_addr`）を明示的に実行する必要がある。通常の C コードのコンパイルには影響しない。
 
 ### 6. jp.d imm（即値オフセット版ディレイドブランチ） — **解決済み**
@@ -97,7 +98,7 @@ ext33 は「分岐」「データアクセス」「GP有無」の3軸でパタ�
   EXT0（絶対値が6ビット以内）・EXT1（絶対値が19ビット以内）パスのコードも正しく実装されており、
   `asm-data-access.s` で全アドレッシングモードの encoding をテスト済み。
   なお、通常のリンク済みバイナリでは非絶対シンボルが支配的なため、EXT2 が常用される。
-- **GP最適化**: 「GP最適化#5」参照。ユーザアプリには不要、設計上実装しない。
+- **GP最適化**: 「GP最適化#5」参照。MIPS スタイルの可変 GP は実装しない。`R8 == 0` 利用の絶対アドレッシングは実装済み (`FeatureR8AbsGlobal`、`-mattr=-r8-abs` で無効化可能)。
 
 ### 10. 全命令の AsmParser 対応 — **解決済み**
 
@@ -126,7 +127,7 @@ fp.lib/idiv.lib のアセンブリを compiler-rt に移植済み。
 cmake ビルドシステムにも S1C33 を登録。`libclang_rt.builtins-s1c33.a` が
 `libfp.a`・`libidiv.a` を完全に置き換える。詳細: `docs/reports/compiler-rt-newlib-phase1-report.md`
 
-### 12. newlib の S1C33 向けポーティング — **Phase 2 (Stage A) 完了（2026-04）**
+### 12. newlib の S1C33 向けポーティング — **Phase 2 完了（2026-05）**
 
 ~~lib.lib の代替。lib.lib にはエラッタがあるため、
 newlib で置き換えれば既知バグを回避できる。~~
@@ -149,9 +150,14 @@ P/ECE 固有ヘッダ（`piece.h` 等 11 件）のみ `sdk/include/` からコ�
 
 実機確認済 (2026-04-28): mini_nocrt / minimal / hello / pmdplay (システムメニュー含む)。
 
-**Phase 2 Stage B（EPSON SDK ライブラリの完全削除）は未着手。** Stage A で全アプリの
-動作検証が済めば `BareMetal.cpp` から `-lio -llib -lmath -lstring -lctype` を外して
-完全に newlib のみに切り替える。現状は念のため fallback を残置。
+**Phase 2 Stage B（EPSON SDK ライブラリの完全削除）完了 (2026-05-15)**: BlackWings / odemaru
+を含む全 LLVM ビルド app の map ファイルで `libio.a / liblib.a / libmath.a / libstring.a /
+libctype.a` への参照が 0 件であることを確認後、`BareMetal.cpp` から `-lio -llib -lmath -lstring
+-lctype` を削除、`tools/crt/Makefile` の `SDK_LIBS` 変数と SRF→ELF 変換レシピ 5 本を撤去。
+`ctype_table.o` も newlib `libc.a` が `_ctype_` を持つため不要となり退役。`tools/measure-lto.sh`
+の `LIBS=` も同様に整理。`make` / `make sysroot` で `sdk/lib/` を一切読まなくなった。
+唯一残った sdk/ 読み出しは開発時専用ターゲット `make regen-builtins-asm`
+（compiler-rt 用 fp.lib / idiv.lib アセンブリ回収）のみ。
 
 ### 13. 64ビット整数ランタイムの完全性 — **解決済み（Phase 1、2026-04）**
 
@@ -167,26 +173,28 @@ compiler-rt の `GENERIC_SOURCES` に `fixsfdi.c`、`fixunssfdi.c`、`floatdisf.
 
 ## ツール・周辺機能
 
-### 14. アセンブリソーストランスレータ asm33conv（§10.6 準拠の拡張命令展開）
+### 14. アセンブリソーストランスレータ asm33conv（§10.6 準拠の拡張命令展開） — **シンプル/スプライト由来の x 命令はカバー完了（2026-05-15）**
 
-修正済みのパターン:
-- xld（ロード/ストア）: ext+ext+ld.w [%rb] 形式に展開
-- xshift（シフト/ローテート）: 複数の基本シフト命令に分割（ext不使用）
+実装済みのパターン（`tools/simple/` / `tools/sprite/` のネイティブビルドに必要な範囲）:
+- xld（ロード/ストア）: ext+ld.X [%rb]、絶対アドレス `[label]` は `ext sym@ah; ext sym@al; ld.X [%r8]` (R8=0 経由)
+- xshift（xsll/xsra/xsrl/xsla）: 即値は複数の基本シフト命令に分割、レジスタ-レジスタは x プレフィクス除去のみ
+- xadd / xsub: rd==rs は 2 オペランド + ext zero_ext、rd!=rs は Class 1 ALU (`ext imm; op %rd, %rs`)
+- xand / xoor: 同上だが sign_ext (signed sign6 base)、`0xfffffffc` 等の 32-bit unsigned hex は自動的に signed 32-bit に正規化
+- xcmp: 2 オペランド sign_ext、ext 0~2 個
+- xjp / xjr{eq,ne,ge,gt,le,lt,ugt,ule,ult,uge} / xcall: x プレフィクス除去のみ (AsmParser が自動 ext)
+- `%sp` 専用処理: `xld.X [%sp+N]` の N をバイト→ワード/ハーフ/バイト換算で除算、`xadd/xsub %sp,%sp,N` も N/4 で emit、`[%sp]` は `[%sp+0]` を強制
+- ディレクティブ: `.code → .text`, `.half → .short`, `.word → .long`, `.lcomm/.comm sym N → sym, N` (空白→コンマ)
 
-未実装のパターン（§10.6 準拠で必要）:
-- §10.6.1 算術演算（xadd/xsub）: 6展開形式、3オペランド、SP操作でR9使用
-- §10.6.2 比較（xcmp）: 3展開形式、SP比較でR9使用
-- §10.6.3 論理演算（xand/xoor/xxor/xnot）: 3展開形式
-- §10.6.5 SP相対転送: 4展開形式、SP→R9経由
-- §10.6.6 メモリ転送: 8展開形式、R9スクラッチ、GP分岐
-- §10.6.7 即値ロード: 2展開形式、シンボル±即値
-- §10.6.8 ビット操作: 5展開形式、R9でアドレス構築
-- §10.6.9 分岐: 2展開形式、1/2/3命令展開
+ユニットテスト 88 件（`tools/asm33conv/test_asm33conv.py`）+ 実機検証（BlackWings / odemaru / spriteライブラリ経由のアプリ）でカバー。
+
+未実装で将来必要になり得るパターン（実用ライブラリでは未遭遇）:
+- §10.6.5 SP 相対転送で N > 4092 バイト（imm10 範囲超え）: 現状エラーで停止
+- §10.6.7 即値ロードの `xld.w %rd, sym±offset` シンボル形: 現状 32-bit 整数 immediate のみ
 
 設計方針（確定）:
 - AsmParser は基本命令のみ受け付ける（拡張命令サポート削除済み）
 - asm33conv がスタンドアロンツールとして §10.6 を忠実に実装
-- インラインアセンブリでは拡張命令は使用不可（制約事項）
+- インラインアセンブリでは拡張命令は使用不可（制約事項）— C 内 asm() が x 命令を含む場合は別 .s ファイルに切り出して asm33conv 経由でアセンブル
 
 ### 15. pceapi のソースビルド体制 — **解決済み**
 
