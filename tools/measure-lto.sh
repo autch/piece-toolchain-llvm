@@ -17,7 +17,7 @@ CLANG="$BIN/clang"
 LLD="$BIN/ld.lld"
 SIZE="$BIN/llvm-size"
 
-CFLAGS_COMMON="--target=s1c33-none-elf --sysroot=$SYSROOT -O2 -Wall -Wno-incompatible-library-redeclaration"
+CFLAGS_COMMON="--sysroot=$SYSROOT -O2 -Wall"
 LDFLAGS_COMMON="-m elf32ls1c33 -T $LD_SCRIPT"
 # newlib Phase 2 Stage B: the gcc33-era EPSON SDK libraries (-lio -llib
 # -lmath -lstring -lctype) and the long-replaced -lfp / -lidiv are no

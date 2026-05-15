@@ -67,14 +67,11 @@ S1C33_ASM_DIR := $(BUILTINS_SRC)/s1c33
 
 # CRT/library compiler flags
 # -ffreestanding: no hosted-env assumptions; suppresses memset/memcpy builtins
-# -Wall -Wno-incompatible-library-redeclaration: SDK headers use non-standard
-#   function signatures; suppress the resulting redeclaration warnings
 CFLAGS_CRT := --target=$(TARGET) -c -ffreestanding \
               $(INCLUDE) \
 			  -O1 \
 			  -fno-inline \
               -Wall \
-              -Wno-incompatible-library-redeclaration \
               -Wno-int-conversion
 
 ASFLAGS_CRT := --target=$(TARGET) -c -ffreestanding

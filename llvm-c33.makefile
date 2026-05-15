@@ -11,7 +11,7 @@ else
 endif
 
 CC = $(BIN)/clang --sysroot=$(SYSROOT)
-CFLAGS = $(LTOFLAGS) -fno-inline -Wno-incompatible-library-redeclaration
+CFLAGS = $(LTOFLAGS) -fno-inline
 CXX = $(BIN)/clang++ --sysroot=$(SYSROOT)
 CXXFLAGS = $(CFLAGS)
 AS = $(BIN)/clang --sysroot=$(SYSROOT)
