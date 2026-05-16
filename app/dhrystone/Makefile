@@ -3,9 +3,10 @@ include ../../llvm-c33.makefile
 
 CFLAGS := -O2 -Wall -DREG $(CFLAGS)
 CFLAGS_FASTRUN := $(CFLAGS) -include fastrun_prefix.h
-LDFLAGS := -O2 $(LDFLAGS)
+CFLAGS_TURBO := $(CFLAGS) -DTURBO
+LDFLAGS := -O2 -Wall $(LDFLAGS)
 
-all: dhry1.pex dhry2.pex
+all: dhry1.pex dhry2.pex dhry2t.pex
 
 dhry1.pex: dhry1.elf
 	$(PPACK) -e -n"Dhrystone 1" $< -o$@
@@ -27,9 +28,18 @@ pass2_f.o: pass2.c dry.h
 	$(CC) -c $(CFLAGS_FASTRUN) -o $@ $<
 
 
+dhry2t.pex: dhry2t.elf
+	$(PPACK) -e -n"Dhry 2 (turbo)" $< -o$@	
+dhry2t.elf: main_t.o pass1_f.o pass2_f.o turboctl.o c33209.o
+	$(LD) $(LDFLAGS) -Wl,-Map,dhry2t.map -o $@ $^
+
+main_t.o: main.c dry.h turboctl.h
+	$(CC) -c $(CFLAGS_TURBO) -o $@ $<
+turboctl.o: turboctl.c turboctl.h
+c33209.o: c33209.c
+
 %.o: %.c
 	$(CC) -c $(CFLAGS) -o $@ $<
 
 clean:
-	rm -f *.o dhry1.elf dhry1.pex dhry2.elf dhry2.pex
-
+	rm -f *.o

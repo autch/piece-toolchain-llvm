@@ -1,0 +1,37 @@
+
+CC = wine pcc33
+LD = wine pcc33
+PPACK = wine ppack
+CFLAGS := -O2 -Wall -DREG -gp=0x0 -near
+LDFLAGS := -O2 -lm
+LDFLAGS_FASTRUN := -O2 -lm -ls +codeblock FRAM {pass1_f.o pass2_f.o} +addr 0x1000 {@FRAM} 
+
+all: dhry1_33.pex
+
+dhry1_33.pex: dhry1_33.srf
+	$(PPACK) -e -n"Dhry 1@gcc33" $< -o$@
+dhry1_33.srf: main.o pass1.o pass2.o
+	$(LD) $(LDFLAGS) -e$@ $^
+
+dhry2_33.pex: dhry2_33.srf
+	$(PPACK) -e -n"Dhry 2@gcc33" $< -o$@
+dhry2_33.srf: main.o pass1_f.o pass2_f.o
+	$(LD) $(LDFLAGS_FASTRUN) -e$@ $^
+
+
+main.o: main.c dry.h
+pass1.o: pass1.c dry.h
+pass2.o: pass2.c dry.h
+pass1_f.o: pass1_f.c dry.h
+pass2_f.o: pass2_f.c dry.h
+
+pass1_f.c: pass1.c
+	cp $< $@
+pass2_f.c: pass2.c
+	cp $< $@
+
+%.o: %.c
+	$(CC) -c $(CFLAGS) $<
+
+clean:
+	rm -f *.o

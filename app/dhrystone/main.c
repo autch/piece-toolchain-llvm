@@ -1,9 +1,12 @@
 #include <piece.h>
-#include <stdint.h>
 #define PASS2
 #include "dry.h"
 
-uint8_t vbuff[128 * 88];
+#ifdef TURBO
+#include "turboctl.h"
+#endif
+
+unsigned char vbuff[128 * 88];
 int update = 0;
 
 // pass1.c
@@ -48,6 +51,9 @@ void pceAppProc(int cnt)
 
 void pceAppExit()
 {
+#ifdef TURBO
+    turbo(0);
+#endif
 }
 
 extern Boolean Reg;
@@ -117,6 +123,11 @@ void start()
         /* Start timer */
         /***************/
 
+#ifdef TURBO
+        // pceTimerGetPrecisionCount() が turbo 切り替えをまたぐと値が正しくなくなるので、さきに有効化する
+        turbo(-1);
+#endif
+
         Begin_Time = pceTimerGetPrecisionCount();
 
         for (Run_Index = 1; Run_Index <= Number_Of_Runs; ++Run_Index)
@@ -171,6 +182,9 @@ void start()
     
         End_Time = pceTimerGetPrecisionCount();
         User_Time = pceTimerAdjustPrecisionCount(Begin_Time, End_Time);
+#ifdef TURBO
+        turbo(0);
+#endif
 
         if (User_Time < 2 * 1000 * 1000) // 2 seconds, in microseconds
         {

@@ -352,6 +352,8 @@
 
 /* variables for time measurement: */
 
+#if 0
+
 #ifdef TIME
 
 #define CLOCK_TYPE "time()"
@@ -404,6 +406,8 @@ struct tms time_info;
 #endif /* MSC_CLOCK */
 #endif /* TIME */
 
+#endif
+
 #define Mic_secs_Per_Second 1000000.0
 #define NUMBER_OF_RUNS 50000 /* Default number of runs */
 
@@ -437,7 +441,7 @@ typedef enum
 #include <stdio.h>  /* for strcpy, strcmp */
 #include <stdlib.h> /* For exit */
 #include <string.h> /* For strcpy */
-#include <stdint.h> /* For intptr_t */
+// #include <stdint.h> /* For intptr_t */
 
 #define Null 0 /* Value of a Null pointer */
 #define true 1
