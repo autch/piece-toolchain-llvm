@@ -273,6 +273,7 @@ BUILTIN_C_SRCS_NAMES := \
 	paritydi2.c paritysi2.c \
 	divmodsi4.c udivmodsi4.c \
 	powidf2.c powisf2.c \
+	comparedf2.c comparesf2.c \
 	int_util.c fp_mode.c
 
 BUILTIN_C_OBJS := $(patsubst %.c,$(BUILTINS_BUILDDIR)/%.o,$(BUILTIN_C_SRCS_NAMES))
