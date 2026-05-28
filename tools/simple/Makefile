@@ -27,9 +27,9 @@ clean:
 install: $(SYSROOT)/lib/libsimple.a $(SYSROOT)/lib/libdefinst.a $(SYSROOT)/include/simple.h
 
 $(SYSROOT)/lib/libsimple.a: libsimple.a
-	cp $< $@
+	install -D -m 644 $< $@
 $(SYSROOT)/lib/libdefinst.a: libdefinst.a
-	cp $< $@
+	install -D -m 644 $< $@
 $(SYSROOT)/include/simple.h: simple.h
-	cp $< $@
+	install -D -m 644 $< $@
 

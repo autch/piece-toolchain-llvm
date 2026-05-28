@@ -21,4 +21,4 @@ clean:
 install: $(SYSROOT)/lib/libpceshim.a
 
 $(SYSROOT)/lib/libpceshim.a: libpceshim.a
-	cp $< $@
+	install -D -m 644 $< $@

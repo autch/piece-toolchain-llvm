@@ -35,6 +35,6 @@ clean:
 install: $(SYSROOT)/lib/libsprite.a $(SYSROOT)/include/pclsprite.h
 
 $(SYSROOT)/lib/libsprite.a: libsprite.a
-	cp $< $@
+	install -D -m 644 $< $@
 $(SYSROOT)/include/pclsprite.h: pclsprite.h
-	cp $< $@
+	install -D -m 644 $< $@

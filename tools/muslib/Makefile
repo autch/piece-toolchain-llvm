@@ -1,6 +1,6 @@
 include ../../llvm-c33.makefile
 
-CFLAGS := -O2 -DFASTCODE $(CFLAGS)
+CFLAGS := -O2 -DFASTCODE -I. $(CFLAGS)
 
 LIBOBJS = mus.o musfast.o seq.o exp12.o wavetable.o instdef.o
 INSTOBJS =\
@@ -36,9 +36,9 @@ clean:
 install: $(SYSROOT)/lib/libmuslib.a $(SYSROOT)/include/musdef.h $(SYSROOT)/include/muslib.h
 
 $(SYSROOT)/lib/libmuslib.a: libmuslib.a
-	cp $< $@
+	install -D -m 644 $< $@
 $(SYSROOT)/include/musdef.h: musdef.h
-	cp $< $@
+	install -D -m 644 $< $@
 $(SYSROOT)/include/muslib.h: muslib.h
-	cp $< $@
+	install -D -m 644 $< $@
 

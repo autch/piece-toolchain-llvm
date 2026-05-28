@@ -108,7 +108,7 @@ pceshim-install:
 	$(MAKE) -C $(TOPDIR)/tools/pceshim install
 
 $(SYSROOT)/lib/piece.ld: $(TOPDIR)/tools/piece.ld
-	cp $< $@
+	install -D -m 644 $< $@
 
 clean:
 	rm -rf $(BUILDDIR)
@@ -195,12 +195,12 @@ $(SYSROOT)/include/.newlib-stamp: $(NEWLIB_INCLUDE) \
 	@# These supersede any newlib equivalents that share a name and are
 	@# the build's authoritative copies (the sdk/include/ originals are
 	@# reference only).
-	cp $(addprefix $(LOCALINC)/,$(LOCAL_HEADER_NAMES)) $(SYSROOT)/include/
+	install -D -m 644 -t $(SYSROOT)/include/ $(addprefix $(LOCALINC)/,$(LOCAL_HEADER_NAMES))
 	@# Install library-side headers from their respective tools/<lib>/
 	@# directories. These are the canonical sources for the listed
 	@# headers; sdk/include/ copies are reference only.
-	cp $(addprefix $(SPRITEINC)/,$(SPRITE_HEADER_NAMES)) $(SYSROOT)/include/
-	cp $(addprefix $(SIMPLEINC)/,$(SIMPLE_HEADER_NAMES)) $(SYSROOT)/include/
+	install -D -m 644 -t $(SYSROOT)/include/ $(addprefix $(SPRITEINC)/,$(SPRITE_HEADER_NAMES))
+	install -D -m 644 -t $(SYSROOT)/include/ $(addprefix $(SIMPLEINC)/,$(SIMPLE_HEADER_NAMES))
 	@# Add _REENT_ONLY wrapper so #include <stdio.h> etc. doesn't pull in full reent
 	@printf '#ifndef _REENT_ONLY\n#define _REENT_ONLY\n#endif\n' > $(SYSROOT)/include/newlib_config.h
 	@touch $@
@@ -237,7 +237,7 @@ regen-builtins-asm: | $(BUILDDIR)
 	$(LLVM_OBJDUMP) -d -r --symbolize-operands "$$tmpdir/idiv.a" | $(OBJDUMP2ASM) -o "$$tmpdir/idiv"; \
 	for src in "$$tmpdir"/fp/*.s "$$tmpdir"/idiv/*.s; do \
 		dst="$(S1C33_ASM_DIR)/$$(basename "$${src%.s}").S"; \
-		cp "$$src" "$$dst"; \
+		install -D -m 644 "$$src" "$$dst"; \
 	done; \
 	echo "Recovered builtins assembly updated in $(S1C33_ASM_DIR)."
 
@@ -449,5 +449,5 @@ $(NEWLIB_LIBS) &: $(NEWLIB_BUILDDIR)/Makefile
 	  src=$$(find $(NEWLIB_BUILDDIR) -maxdepth 3 -name $$lib -type f | head -1); \
 	  if [ -z "$$src" ]; then echo "ERROR: $$lib not produced" >&2; exit 1; fi; \
 	  echo "Installing $$src -> $(SYSROOT)/lib/$$lib"; \
-	  cp "$$src" $(SYSROOT)/lib/$$lib; \
+	  install -D -m 644 "$$src" $(SYSROOT)/lib/$$lib; \
 	done
