@@ -1,9 +1,9 @@
 [submodule "llvm"]
 	path = llvm
-	url = git@github.com:autch/llvm-s1c33.git
+	url = https://github.com/autch/llvm-s1c33.git
 [submodule "newlib"]
 	path = newlib
-	url = git@github.com:autch/newlib-s1c33.git
+	url = https://github.com/autch/newlib-s1c33.git
 [submodule "piece-emu"]
 	path = piece-emu
-	url = git@github.com:autch/piece-emu.git
+	url = https://github.com/autch/piece-emu.git
