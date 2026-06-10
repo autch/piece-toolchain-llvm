@@ -141,21 +141,41 @@ srf2elf がこの番号にマップする）。`S1C33ELFObjectWriter.cpp` / `ELF
 
 ## 🟡 レビューで質問されそうな点（説明があれば通る）
 
-- **`S1C33ISelLowering.cpp:1314`** — `if (4 + AndCost <= 4) return SDValue();` は
-  `AndCost >= 1` なので**常に偽の dead code**。コメントの意図（「合計 > 4 のときだけ
-  最適化」）と実装が一致していない。ガードを直すか削除すべき。
-- **`S1C33InstrInfo.td:1291`** — `def EXT { let hasSideEffects = 1; }`。ext を並べ替え
-  から守る意図なら妥当だが、根拠コメントがないと「なぜ pure な即値拡張に副作用フラグ？」
-  と必ず聞かれる。
-- **relaxation 戦略** — CALL の EXT0→EXT2 直行（中間段スキップ）は RISC-V の多段
-  チェーンと異なる非標準設計。`S1C33AsmBackend.cpp:199-217` にコメントはあるので、
-  PR 説明文で明示すれば通る見込み。
-- **`MOV_ri19`/`MOV_ri32` 等の `Defs = [PSR]`** が「展開後の最終命令が PSR を壊すから」
-  という暗黙依存になっている点 — 維持コメントの追加推奨。
-- **MCCodeEmitter のマジックナンバー**（例: `S1C33MCCodeEmitter.cpp:162` の `0x6C00`）—
-  CPU マニュアル節番号への参照コメント追加。
-- **`S1C33AsmBackend.cpp:51`** — `fixup_s1c33_abs_l` の `offset=4` が非自明
-  （ld.w の sign6 が bits[9:4] にあるため）。コメント追加推奨。
+精査結果（2026-06-10）を含めて更新。①④で当初認識より深い問題、②で潜在ハザードを発見。
+
+- **① `S1C33ISelLowering.cpp` の dead ガード** — `combineAndSraBias` の
+  `if (4 + AndCost <= 4)` は常に偽。精査の結果、**sibling の `combineSrlSraBias` の
+  `if (ShiftCost <= 4)` も常に偽**（`4 + ceil(K/8) ≥ 5`）。どちらも「sra 31 だけで
+  4 命令なので置換は常に得」という正しい推論が死んだ比較として書かれていた。
+  → **対応済み**: 両ガードを削除し推論をコメント化（挙動不変）。
+- **② `EXT` の `hasSideEffects = 1`** — 当初の「0 にすべきでは」という見立ては**誤り**。
+  EXT は `eliminateFrameIndex`（PEI = post-RA スケジューラ前）でも生成されるため、
+  このフラグが barrier chain（`isGlobalMemoryObject`）として後続メモリ命令の繰り上げを
+  防いでいる。→ **②a 対応済み**: 根拠コメントを追加。
+  **②b → 対応済み**（コミット `2bce1ad7`、実機確認済み 2026-06-10）: barrier は
+  純 ALU 命令の挟み込みや EXT 後の独立 2 ロードの入れ替えまでは禁止できず、構造上の
+  潜在ハザードが残っていた（再現試行では list scheduler のソース順タイブレークにより
+  分離せず、発現実績なし）。恒久対策として `*_sp_off` pseudo 8 個を新設し、
+  eliminateFrameIndex は opcode 差し替えのみ、EXT 生成は ExpandExtPseudos
+  （スケジューラ後）に統一した。これで裸の ext+対象ペアが PEI〜post-RA スケジューラ間に
+  存在する窓が消滅。lit 全 42 パス、pmdplay.elf / hello.elf はバイナリ完全一致。
+  副次的発見: emitPrologue の `WordSize <= 1023` assert によりフレームは最大
+  4092 バイト（`sub %sp, imm10` 1 段のみ）で、SP オフセット用 2-ext 分岐は元々
+  到達不能なデッドコードだった（新ヘルパにも防御的に残置）。4KB 超フレームは
+  別件の未実装事項。
+- **③ relaxation 戦略**（EXT0→EXT2 直行）— `S1C33AsmBackend.cpp` にコメント済み。
+  PR 説明文マターでありフォークでは**対応不要**。
+- **④ `MOV_ri19`** — 当初指摘（`Defs = [PSR]` のコメント不足）より重要な問題を発見:
+  コメントが「`isAsCheapAsAMove` is NOT set」と書いているのにコードは
+  `isAsCheapAsAMove = 1`。コミット `a0030fc` が旧ドラフトのコメントとフラグ設定を
+  同時に入れたもので、コミットメッセージの損益分析（spill 3+N vs remat 2N）から
+  **コードが正、コメントが stale**。→ **対応済み**: コミットメッセージの分析を
+  コメントに移植し、`Defs = [PSR]` の参照（MOV_ri32 の説明へ）も追加。
+- **⑤ `S1C33MCCodeEmitter.cpp` の `0x6C00`** → **対応済み**: Class 3
+  `ld.w %rd, sign6` 基底オペコードである旨をコメント追加。
+- **⑥ `S1C33AsmBackend.cpp` の `fixup_s1c33_abs_l` offset=4** — `MCFixupKindInfo` の
+  `TargetOffset` は**ビット単位**（sign6 = bits[9:4] → offset 4, width 6）で整合して
+  いた（当初レビューはバイトと誤読）。→ **対応済み**: ビット単位である旨をコメント追加。
 
 ---
 
@@ -192,7 +212,9 @@ upstream に出すと仮定した場合の現実的な分割:
 3. **upstream から除外**: compiler-rt s1c33 アセンブリ（ライセンス）、BareMetal.cpp の
    P/ECE リンクライン（フォークに留める）
 
-**出す前の必須作業（推奨順）**:
+**出す前の必須作業（推奨順）**（当初の提案。1–5 は対応済み、6 は項目 7 として
+別セッション予定 — Driver テストのみ toolchain 分離で一部追加済み。詳細は下記
+「対応状況」参照）:
 
 1. `clang-format -i` 一括適用
 2. `lit.local.cfg` 追加（CodeGen/S1C33、MC/S1C33 の両方）
@@ -291,8 +313,18 @@ sysroot 再生成、hello / pmdplay の .pex ビルド成功、デフォルト `
 
 - 項目 7（Driver / Sema / MC ネガティブ / i64 のテスト追加）— 別セッションで実施予定
   （Driver テストは toolchain 分離で一部追加済み）
-- 黄色項目（レビューで質問されそうな点）はすべて未着手:
-  dead code `4 + AndCost <= 4`（S1C33ISelLowering.cpp:1314 付近）、`EXT hasSideEffects = 1`
-  の根拠コメント、MCCodeEmitter マジックナンバーのマニュアル参照、`MOV_ri19/ri32` の
-  `Defs = [PSR]` 維持コメント、`fixup_s1c33_abs_l` の offset=4 説明コメント
-  （※ clang-format 適用済みのため行番号は当時から移動している）
+
+黄色項目はすべて対応完了（①③④⑤⑥・②a・②b、上記 🟡 セクション参照）。
+
+②b の検証中に判明した「4KB 超スタックフレーム」も対応完了（コミット `0055cb5b`、
+実機確認済み 2026-06-10）: `sub/add %sp` は imm10（ワード単位、ext 不可）のため
+4092 バイトで頭打ちで、超過時は assert（リリースビルドでは無言の即値切り詰め =
+サイレント破壊）だった。カーネル API の struct 値渡しで踏み得るため、プロローグ/
+エピローグを 1023 ワード単位のチャンク分割に変更。4092 バイト以下は従来と同一命令
+（pmdplay の .text バイト一致確認）。これにより `*_sp_off` の 2-ext 分岐が実際に
+到達可能になった（800KB フレームのコンパイルで検証）。`eliminateCallFramePseudoInstr`
+のバイト/ワード単位取り違えも防御修正（dynamic_stackalloc 非対応のため現状到達不能）。
+
+なお検証中の備忘: ELF 全体の md5 はツールチェインの HEAD コミットハッシュを含む
+clang バージョン文字列（`.debug_*` の producer）で揺れるため、バイナリ比較は
+`.text` の逆アセンブリ比較で行うこと（`-s` 付きビルドの hello.elf は影響を受けない）。
