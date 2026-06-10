@@ -1,7 +1,7 @@
 C33HOME = $(PWD)/../../
 SDK=$(C33HOME)/sdk
 BIN=$(C33HOME)/build/bin
-SYSROOT=$(C33HOME)/sysroot/s1c33-none-elf
+SYSROOT=$(C33HOME)/sysroot/s1c33-none-piece
 
 CC=wine pcc33
 CFLAGS=-v -O0 -Wall

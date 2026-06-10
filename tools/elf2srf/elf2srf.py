@@ -2,7 +2,7 @@
 """elf2srf.py — Convert ELF32 (S1C33) object file to SRF33 object file.
 
 Inverse of srf2elf.py. Converts ELF32 relocatable objects produced by
-    clang --target=s1c33-none-elf -c
+    clang --target=s1c33-none-piece -c
 to SRF33 objects compatible with the EPSON lk33 linker.
 
 SRF format reference: S1C33 C Compiler Package Manual Appendix A-1.

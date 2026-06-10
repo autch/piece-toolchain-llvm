@@ -105,7 +105,7 @@ srf2elfはSRFオブジェクトファイル(.o)のELF変換に対応済み。SRF
 [LLVM ツールチェイン (Phase 2 Stage B 以降)]
   clang hello.c
     → LLVM backend → ELF .o
-    (--target=s1c33-none-elf は LLVM_DEFAULT_TARGET_TRIPLE で既定済み、明示不要)
+    (--target=s1c33-none-piece は LLVM_DEFAULT_TARGET_TRIPLE で既定済み、明示不要)
   newlib (autotools build, tools/crt/Makefile)
     → libc.a / libm.a (S1C33 ABI 準拠)
   gen_pceapi.py vector.h
@@ -636,7 +636,7 @@ P/ECEにおけるカーネル↔アプリケーション境界は、pcekn.symで
 newlib移植の方針と現状:
 
 **Phase 1（完了、2026-04）:** 標準Cヘッダを newlib から提供するよう移行済み。
-`sysroot/s1c33-none-elf/include/` の標準ヘッダは newlib サブモジュール（`autch/newlib-s1c33`）から生成する。
+`sysroot/s1c33-none-piece/include/` の標準ヘッダは newlib サブモジュール（`autch/newlib-s1c33`）から生成する。
 P/ECE 固有ヘッダは Stage B 完了時点で `tools/crt/include/` および `tools/{simple,sprite}/` のソースツリー側を canonical 元として参照する形に再編済み。`sdk/include/` は reference material 化。
 
 **Phase 2 Stage A（完了、2026-04-28）:** newlib の C ライブラリ本体（`libc.a` / `libm.a`）を S1C33 向けにビルドし、EPSON SDK ライブラリの前にリンクすることで段階的に置き換え。実機確認済（pmdplay、システムメニュー含む）。

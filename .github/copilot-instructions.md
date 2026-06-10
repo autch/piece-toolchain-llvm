@@ -24,7 +24,7 @@ cmake -G Ninja ../llvm/llvm \
   -DCMAKE_BUILD_TYPE=Debug \
   -DLLVM_TARGETS_TO_BUILD="" \
   -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="S1C33" \
-  -DLLVM_DEFAULT_TARGET_TRIPLE="s1c33-none-elf" \
+  -DLLVM_DEFAULT_TARGET_TRIPLE="s1c33-none-piece" \
   -DLLVM_ENABLE_PROJECTS="clang;lld;lldb" \
   -DLLVM_INSTALL_UTILS=ON \
   -DLLVM_USE_LINKER=mold \
@@ -81,7 +81,7 @@ Or using lit directly:
 ### Manual compilation with clang
 
 ```bash
-./bin/clang --target=s1c33-none-elf --sysroot=../sysroot/s1c33-none-elf \
+./bin/clang --target=s1c33-none-piece --sysroot=../sysroot/s1c33-none-piece \
   -O2 -c test.c -o test.o
 ```
 
@@ -151,7 +151,7 @@ The emulator serves Target Description XML (`qXfer:features:read`) so LLDB auto-
 
 ### Target Triple and Naming
 
-- **Target triple**: `s1c33-none-elf`
+- **Target triple**: `s1c33-none-piece` (P/ECE apps; default) / `s1c33-none-elf` (bare metal)
 - **Backend directory**: `llvm/llvm/lib/Target/S1C33/`
 - **Class prefix**: `S1C33` (e.g., `S1C33TargetMachine`, `S1C33InstrInfo`)
 - **Tests**: `llvm/llvm/test/CodeGen/S1C33/`
@@ -371,7 +371,7 @@ tools/
   ├── crt/                      # Startup code (crt0, crti, libcxxrt.a)
   ├── piece.ld                  # Linker script for P/ECE
   └── asm33conv/                # EPSON as33 → LLVM asm converter
-sysroot/s1c33-none-elf/         # Headers, libraries for --sysroot
+sysroot/s1c33-none-piece/         # Headers, libraries for --sysroot
   ├── include/                  # newlib headers + P/ECE-specific headers
   └── lib/                      # crt0.o, libclang_rt.builtins-s1c33.a, libcxxrt.a, etc.
 hello/, minimal/, fpkplay/      # Example applications

@@ -653,7 +653,7 @@ def translate_line(line):
 def main():
     ap = argparse.ArgumentParser(
         description='pp33/ext33 拡張構文 → LLVM アセンブリ変換器',
-        epilog='変換後のファイルは clang --target=s1c33-none-elf -c でアセンブル可能。')
+        epilog='変換後のファイルは clang --target=s1c33-none-piece -c でアセンブル可能。')
     ap.add_argument('input', help='入力アセンブリファイル (.s)')
     ap.add_argument('-o', '--output', default=None,
                     help='出力ファイル (省略時は標準出力)')

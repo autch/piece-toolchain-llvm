@@ -16,7 +16,7 @@ Generates binaries ABI-compatible with the existing P/ECE SDK libraries.
 |---|---|
 | ターゲット CPU | EPSON S1C33000 (S1C33209) — 32-bit RISC, 16-bit fixed-width instructions |
 | ターゲットデバイス | Aquaplus P/ECE |
-| トリプル | `s1c33-none-elf` |
+| トリプル | `s1c33-none-piece`（P/ECE 向け、ビルド既定）/ `s1c33-none-elf`（ベアメタル） |
 | ステータス | **Phase 6 完了 + compiler-rt Phase 1 / newlib Phase 2 Stage B 完了 + simple/sprite ライブラリのソースビルド化完了** — 実機動作確認済み（2026-03〜05） |
 | ベース LLVM | llvm-project (サブモジュール, `llvm/` 以下) |
 
@@ -82,7 +82,7 @@ llvm-c33/
 ├── sdk/                    P/ECE SDK（別途入手・配置）
 │   ├── include/
 │   └── lib/
-├── sysroot/s1c33-none-elf/ ビルド済み sysroot（make -C tools/crt で生成）
+├── sysroot/s1c33-none-piece/ ビルド済み sysroot（make -C tools/crt で生成）
 ├── tools/
 │   ├── crt/                crt0.c, libpceapi.a, libcxxrt.a 生成 Makefile
 │   │   └── include/        SDK 由来ヘッダのローカル正本（s1c33cpu.h は LLVM 対応に書き換え）
@@ -148,7 +148,7 @@ cmake -G Ninja ../llvm/llvm \
   -DCMAKE_BUILD_TYPE=Debug \
   -DLLVM_TARGETS_TO_BUILD="" \
   -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="S1C33" \
-  -DLLVM_DEFAULT_TARGET_TRIPLE="s1c33-none-elf" \
+  -DLLVM_DEFAULT_TARGET_TRIPLE="s1c33-none-piece" \
   -DLLVM_ENABLE_PROJECTS="clang;lld;lldb" \
   -DLLVM_INSTALL_UTILS=ON \
   -DLLVM_USE_LINKER=mold \
@@ -189,7 +189,7 @@ See [`docs/build-howto.md`](docs/build-howto.md) for full instructions.
 ```sh
 # コンパイル＋リンク / Compile + link
 build/bin/clang \
-    --sysroot=sysroot/s1c33-none-elf \
+    --sysroot=sysroot/s1c33-none-piece \
     -O2 \
     myapp.c -o myapp.elf
 

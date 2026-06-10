@@ -8,7 +8,7 @@ set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$ROOT/build/bin"
-SYSROOT="$ROOT/sysroot/s1c33-none-elf"
+SYSROOT="$ROOT/sysroot/s1c33-none-piece"
 LD_SCRIPT="$ROOT/tools/piece.ld"
 TMPDIR="$(mktemp -d /tmp/lto-measure.XXXXXX)"
 trap "rm -rf $TMPDIR" EXIT
@@ -177,7 +177,7 @@ APPS="hello minimal print jien fpkplay pmdplay"
 echo ""
 echo "S1C33 LTO Effect Measurement"
 echo "Compiler: $($CLANG --version 2>&1 | head -1)"
-echo "Target:   s1c33-none-elf, -O2"
+echo "Target:   s1c33-none-piece, -O2"
 echo "Date:     $(date)"
 echo ""
 print_header

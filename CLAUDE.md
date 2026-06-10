@@ -77,7 +77,7 @@ Read `DESIGN_SPEC.md` first — it contains all architecture details, design dec
 
 3. **R8 is the kernel table base pointer, always 0x0.** The P/ECE kernel sets R8 = 0x0 before calling any application callback. pceapi stubs use `ext N / ld.w %r9, [%r8]` to fetch kernel function pointers from address N. User-compiled code must never modify R8. R8 is Reserved to enforce this. Future kernel compilation will need assembly startup code that explicitly sets R8 = 0.
 
-    **The fact that R8 == 0 is exploited as an optimization** (commit `08608bab3ac0`, 2026-04): global load/store is folded to `ext sym@ah / ext sym@al / ld.* [%r8]` (6 bytes; 26-bit absolute address split as bits[25:13]/bits[12:0]) instead of the older 8-byte materialize-then-indirect-load pattern. Implemented via `*_ABS` pseudos, the `S_ABS_AH/AL` MC specifiers (`sym@ah`/`sym@al`), the `R_S1C33_REL_AH/AL` relocations (numbers reused from gcc33 SRF), and the `FeatureR8AbsGlobal` subtarget feature (default on; `-mattr=-r8-abs` falls back). What's **NOT** implemented is a MIPS-style movable GP that points at user `.sdata` — R8 stays fixed at 0 (the kernel guarantee).
+    **The fact that R8 == 0 is exploited as an optimization** (commit `08608bab3ac0`, 2026-04): global load/store is folded to `ext sym@ah / ext sym@al / ld.* [%r8]` (6 bytes; 26-bit absolute address split as bits[25:13]/bits[12:0]) instead of the older 8-byte materialize-then-indirect-load pattern. Implemented via `*_ABS` pseudos, the `S_ABS_AH/AL` MC specifiers (`sym@ah`/`sym@al`), the `R_S1C33_REL_AH/AL` relocations (numbers reused from gcc33 SRF), and the `FeatureR8AbsGlobal` subtarget feature (default on for `s1c33-*-piece` triples only, since R8 == 0 is a P/ECE kernel guarantee; bare-metal `s1c33-none-elf` defaults off and can opt in with `-mattr=+r8-abs`). What's **NOT** implemented is a MIPS-style movable GP that points at user `.sdata` — R8 stays fixed at 0 (the kernel guarantee).
 
 4. **Interrupt handlers** use `__attribute__((interrupt_handler))` generating `pushn %r15` / `popn %r15` / `reti`.
 
@@ -155,7 +155,7 @@ When unsure how to implement something, look at these existing backends in prior
 ## Coding Conventions
 
 - Target name in code: `S1C33` (e.g., `S1C33TargetMachine`, `S1C33InstrInfo`)
-- Triple: `s1c33-none-elf`
+- Triple: `s1c33-none-piece` (P/ECE apps; the build default) / `s1c33-none-elf` (bare metal, no P/ECE runtime, r8-abs off)
 - All files go under `llvm/lib/Target/S1C33/`
 - Use TableGen for anything TableGen can express (instructions, registers, calling conventions)
 - Comment non-obvious encoding decisions with reference to the CPU manual section

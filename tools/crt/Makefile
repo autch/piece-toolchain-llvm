@@ -32,7 +32,7 @@
 
 TOPDIR  := $(realpath ../..)
 BUILDDIR := $(TOPDIR)/build/crt
-SYSROOT  := $(TOPDIR)/sysroot/s1c33-none-elf
+SYSROOT  := $(TOPDIR)/sysroot/s1c33-none-piece
 
 CLANG   := $(TOPDIR)/build/bin/clang
 LLVM_AR := $(TOPDIR)/build/bin/llvm-ar
@@ -50,7 +50,7 @@ LOCALINC := $(TOPDIR)/tools/crt/include
 SIMPLEINC := $(TOPDIR)/tools/simple
 SPRITEINC := $(TOPDIR)/tools/sprite
 
-TARGET  := s1c33-none-elf
+TARGET  := s1c33-none-piece
 INCLUDE := -I$(SYSROOT)/include
 
 # newlib header source
@@ -109,6 +109,9 @@ pceshim-install:
 
 $(SYSROOT)/lib/piece.ld: $(TOPDIR)/tools/piece.ld
 	install -D -m 644 $< $@
+
+$(SYSROOT)/lib:
+	mkdir -p $@
 
 clean:
 	rm -rf $(BUILDDIR)
@@ -287,7 +290,7 @@ $(BUILTINS_BUILDDIR)/%.o: $(BUILTINS_SRC)/%.c | $(BUILTINS_BUILDDIR)
 $(BUILTINS_BUILDDIR)/s1c33_%.o: $(S1C33_ASM_DIR)/%.S | $(BUILTINS_BUILDDIR)
 	$(CLANG) --target=$(TARGET) -c -ffreestanding $< -o $@
 
-$(SYSROOT)/lib/libclang_rt.builtins-s1c33.a: $(S1C33_ASM_OBJS) $(BUILTIN_C_OBJS)
+$(SYSROOT)/lib/libclang_rt.builtins-s1c33.a: $(S1C33_ASM_OBJS) $(BUILTIN_C_OBJS) | $(SYSROOT)/lib
 	$(LLVM_AR) rcs $@ $^
 
 
@@ -297,11 +300,11 @@ $(SYSROOT)/lib/libclang_rt.builtins-s1c33.a: $(S1C33_ASM_OBJS) $(BUILTIN_C_OBJS)
 
 # crt0.o: application header (pceAPPHEAD at 0x100000), BSS zero-fill,
 #         pceAppInit00/pceAppProc00/pceAppExit00/pceAppNotify00 wrappers.
-$(SYSROOT)/lib/crt0.o: crt0.c | $(BUILDDIR) $(SYSROOT)/include/.newlib-stamp
+$(SYSROOT)/lib/crt0.o: crt0.c | $(BUILDDIR) $(SYSROOT)/lib $(SYSROOT)/include/.newlib-stamp
 	$(CLANG) $(CFLAGS_CRT) $< -o $@
 
 # crti.o: default pceAppNotify (weak symbol; overridable by the application).
-$(SYSROOT)/lib/crti.o: defnotify.c | $(BUILDDIR) $(SYSROOT)/include/.newlib-stamp
+$(SYSROOT)/lib/crti.o: defnotify.c | $(BUILDDIR) $(SYSROOT)/lib $(SYSROOT)/include/.newlib-stamp
 	$(CLANG) $(CFLAGS_CRT) $< -o $@
 
 # -----------------------------------------------------------------------
@@ -339,7 +342,7 @@ UTILITY_OBJS := \
 # Step 2: generate one .s per stub, assemble each to its own .o, pack archive.
 # Each function lands in a separate object file so the linker only pulls in
 # the stubs that are actually referenced (no unused API symbols).
-$(SYSROOT)/lib/libpceapi.a: gen_pceapi.py vector.h $(UTILITY_OBJS) | $(PCEAPI_STUBS_DIR)
+$(SYSROOT)/lib/libpceapi.a: gen_pceapi.py vector.h $(UTILITY_OBJS) | $(PCEAPI_STUBS_DIR) $(SYSROOT)/lib
 	python3 gen_pceapi.py vector.h --split-dir $(PCEAPI_STUBS_DIR)
 	for s in $(PCEAPI_STUBS_DIR)/pce*.s; do \
 		$(CLANG) $(ASFLAGS_CRT) $$s -o $${s%.s}.o || exit 1; \
@@ -365,7 +368,7 @@ $(BUILDDIR)/cxxnew.o: cxxnew.c | $(BUILDDIR)
 $(BUILDDIR)/halt.o: halt.c | $(BUILDDIR)
 	$(CLANG) $(CFLAGS_CRT) $< -o $@
 
-$(SYSROOT)/lib/libcxxrt.a: $(BUILDDIR)/cxxrt.o $(BUILDDIR)/cxxnew.o $(BUILDDIR)/halt.o
+$(SYSROOT)/lib/libcxxrt.a: $(BUILDDIR)/cxxrt.o $(BUILDDIR)/cxxnew.o $(BUILDDIR)/halt.o | $(SYSROOT)/lib
 	$(LLVM_AR) rcs $@ $^
 
 # -----------------------------------------------------------------------
@@ -387,8 +390,11 @@ $(SYSROOT)/lib/libcxxrt.a: $(BUILDDIR)/cxxrt.o $(BUILDDIR)/cxxnew.o $(BUILDDIR)/
 # -----------------------------------------------------------------------
 # newlib — built from the newlib/ submodule via its own autotools.
 #
-# We configure newlib in $(NEWLIB_BUILDDIR) targeting s1c33-none-elf and
-# use the freshly-built clang as CC_FOR_TARGET.  Headers are NOT
+# We configure newlib in $(NEWLIB_BUILDDIR) and use the freshly-built
+# clang as CC_FOR_TARGET (targeting s1c33-none-piece).  The autoconf
+# --host/--target strings stay s1c33-none-elf because newlib's config.sub
+# does not know the "piece" OS; only CC_FOR_TARGET's --target matters for
+# the generated code.  Headers are NOT
 # installed from this path — the existing recipe above already manages
 # the sysroot include/ tree by direct copy, dropping headers that clang
 # provides (stdarg.h / stddef.h / float.h) and overlaying P/ECE-specific
@@ -441,7 +447,7 @@ $(NEWLIB_BUILDDIR)/Makefile: $(NEWLIB_SRC)/configure | $(BUILDDIR)
 # Build & install newlib.  We use install-target-newlib + install-target-libm
 # but redirect into a staging dir so the existing sysroot include layout is
 # not touched; only libc.a / libm.a are then copied out.
-$(NEWLIB_LIBS) &: $(NEWLIB_BUILDDIR)/Makefile
+$(NEWLIB_LIBS) &: $(NEWLIB_BUILDDIR)/Makefile | $(SYSROOT)/lib
 	$(MAKE) -C $(NEWLIB_BUILDDIR)
 	@# The build dir layout puts libc.a / libm.a directly at the build root
 	@# for non-recursive newlib.  Locate and copy them.

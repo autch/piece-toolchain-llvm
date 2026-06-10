@@ -25,7 +25,7 @@ sysroot:
 	$(MAKE) -C tools/crt all
 
 tests:
-	$(NINJA) check-llvm-codegen-s1c33
+	$(NINJA) check-llvm-codegen-s1c33 check-llvm-mc-s1c33
 
 clean:
 	$(MAKE) -C tools/crt clean
