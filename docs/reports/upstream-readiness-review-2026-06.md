@@ -239,7 +239,7 @@ upstream に出すと仮定した場合の現実的な分割:
 | 4. clang-format 923 件 | 一括適用（35 ファイル、独立コミット、違反 0 を確認） | ✅ | `e45150d0` |
 | 5. 日本語残存 | .td のコメント 3 箇所を英語化。コミットメッセージは履歴書き換えになるため対応せず | ✅ | `958e0faf` |
 | 6. lldb 汎用修正の混在 | PR 分割の話なのでフォークでは対応不要 | スキップ | — |
-| 7. テストカバレッジの穴 | テスト追加はひとつの独立した作業なので別セッションで実施 | ⏳ 未着手 | — |
+| 7. テストカバレッジの穴 | i64 CodeGen 4 本 + MC ネガティブ 4 本 + Sema 強化&テスト + Driver 拡張で全領域を解消（下記「項目 7 の対応」） | ✅ | `f0d686e5` `669ff6fe` `db21f644` `435e26fd` ほか |
 | 8. lld CMakeLists 順序 | アルファベット順に修正 | ✅ | `ce4aec8f` |
 | 9. relocation 出典 | 出典コメントを `ELFRelocs/S1C33.def` に追加（xgcc の資料が見つからず gcc33 は SRF のため自前割当、という経緯を明記）。ついでに ObjectWriter の重複ローカル enum を廃止し `ELF::R_S1C33_*` に統一 | ✅ | `e05788eb` ほか |
 
@@ -309,10 +309,57 @@ sysroot 再生成、hello / pmdplay の .pex ビルド成功、デフォルト `
 `s1c33-none-elf` は素の BareMetal（compiler-rt + -lc のみ、r8-abs off）に落ちることも
 -### で確認済み。**実機での動作確認済み（2026-06-10）。**
 
+### 項目 7 の対応（2026-06-11）: テストカバレッジの穴を解消
+
+レビューで空白とされた 4 領域すべてにテストを追加した（llvm サブモジュール 5 コミット +
+親リポジトリの Makefile 拡張）。テスト作成の過程で**実バグ 3 件**を発見・修正した:
+
+1. **`ext` 即値のサイレント切り詰め**（コミット `669ff6fe`）— EXT のオペランドが
+   素の `i32imm` で範囲チェックがなく、`ext 9000` が `ext 808` にアセンブルされていた。
+   `def EXT` で uimm13 にオーバーライド（`ext sym@ah` 等のシンボリックは従来どおり
+   fixup 委譲）。これによりデッドコードだった `Match_InvalidUImm13` 診断も到達可能化。
+2. **定数 PC 相対変位のサイレント切り詰め**（同コミット）— simm8 に ParserMatchClass が
+   なく、`jreq 300` が sign8=44 として黙ってエンコードされていた（定数は
+   fixup/relaxation 経路を通らず encoder がマスクするだけ）。SImm8 オペランドクラスを
+   追加し定数のみ [-128, 127] を強制（ラベルは従来どおり）。
+3. **ELFObjectWriter の segfault**（コミット `31a8980c`、**generic MC バグ**）—
+   ローカルな絶対シンボル（`bigsym = 0x4000000`）+ 関係指定子（`ext bigsym@ah`）で
+   セクションシンボル変換が null セクションを参照してクラッシュ。`SecA` ガードを追加し
+   SHN_ABS シンボルをそのまま relocation に保持。lldb の CommentStream 修正と同様、
+   単体で upstream に出せる generic 修正。
+
+追加テストの内訳:
+
+| 領域 | ファイル | 内容 |
+|---|---|---|
+| i64 演算 | `CodeGen/S1C33/i64-arith.ll` | add/sub インラインキャリー、mul の HWMUL/NOMUL 分岐、div/rem libcall |
+| i64 シフト | `CodeGen/S1C33/i64-shift.ll` | 変数シフトは PARTS Custom でインライン（libcall なし）、定数シフトは厳密 CHECK |
+| i64 ABI | `CodeGen/S1C33/i64-abi.ll` | レジスタペア渡し/返し、スタック溢れ、**no-split 規則**（R15 1 本残りで全体スタック）、i64 比較インライン |
+| FP↔i64 | `CodeGen/S1C33/i64-fp-conv.ll` | `__fixsfdi` 等 8 エントリポイント全部（EPSON SDK 欠落 → compiler-rt 提供の名前を固定） |
+| MC ネガティブ | `MC/S1C33/invalid.s` | 全 parse/match 診断（ニーモニック・オペランド種別・全即値レンジ・メモリ構文）を行・桁付きで固定 |
+| MC feature | `MC/S1C33/invalid-feature.s` | mlt.*/mac が generic で拒否、s1c33209 で受理 |
+| MC fixup | `MC/S1C33/fixup-out-of-range.s` | 非リラクサブル jrXX.d の sign8 溢れ、条件分岐 ±2MB（EXT1 上限、jrXX に EXT2 なし）|
+| MC regression | `MC/S1C33/abs-symbol-reloc.s` | 上記 segfault の回帰テスト |
+| Sema | `clang/test/Sema/s1c33-interrupt-handler-attr.c` | 非関数・引数付き属性・引数あり関数・非 void 戻り値・正常系（両 triple） |
+| Driver | `s1c33-toolchain.c` 拡張 + `Inputs/basic_piece_tree/` | --sysroot 転送、crt0/crti 解決、piece.ld 注入と `-T` での抑止、`-nostartfiles` |
+| Driver | `s1c33-cxx-defaults.cpp` | `-fno-rtti` / C++ EH 無効の既定値と明示上書き（両 triple） |
+
+Sema 側は実装も強化（コミット `db21f644`）: 従来は非関数への付与しか警告せず
+`int f(int)` への `interrupt_handler` が黙って通っていた。MSP430/AVR と同型の
+引数数・戻り値チェックを追加し、`warn_interrupt_signal_attribute_invalid` の select に
+S1C33 / interrupt_handler を追加（既存 4 ターゲットのインデックスは不変、リグレッション
+なしを確認）。
+
+「絶対アドレスが 26 bit に収まらない」`applyFixup` エラーは asm から到達不能と判明
+（シンボル付き @ah/@al fixup は常に relocation 化されチェックはリンカ側で行われる）—
+fixup-out-of-range.s のコメントに明記。
+
+親リポジトリの `Makefile` の `tests` ターゲットに `check-clang-codegen-s1c33` と
+clang 側 4 テスト（Driver×2 / Sema / Preprocessor）の llvm-lit 直接実行を追加した。
+
 ### 残件
 
-- 項目 7（Driver / Sema / MC ネガティブ / i64 のテスト追加）— 別セッションで実施予定
-  （Driver テストは toolchain 分離で一部追加済み）
+なし（項目 1・6 は意図的スキップ、その他はすべて対応済み）。
 
 黄色項目はすべて対応完了（①③④⑤⑥・②a・②b、上記 🟡 セクション参照）。
 

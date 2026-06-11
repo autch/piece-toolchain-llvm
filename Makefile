@@ -25,7 +25,12 @@ sysroot:
 	$(MAKE) -C tools/crt all
 
 tests:
-	$(NINJA) check-llvm-codegen-s1c33 check-llvm-mc-s1c33
+	$(NINJA) check-llvm-codegen-s1c33 check-llvm-mc-s1c33 check-clang-codegen-s1c33
+	$(BUILD_DIR)/bin/llvm-lit -sv \
+		llvm/clang/test/Driver/s1c33-toolchain.c \
+		llvm/clang/test/Driver/s1c33-cxx-defaults.cpp \
+		llvm/clang/test/Sema/s1c33-interrupt-handler-attr.c \
+		llvm/clang/test/Preprocessor/s1c33-target-defines.c
 
 clean:
 	$(MAKE) -C tools/crt clean
