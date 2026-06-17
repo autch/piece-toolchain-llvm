@@ -21,10 +21,11 @@ llvm-c33/
 ├── sdk/
 │   ├── include/        piece.h など P/ECE 固有ヘッダ（SRF 変換元）
 │   └── lib/            SDK ライブラリ（SRF 形式、変換元）
-├── newlib/             newlib サブモジュール（標準 C ヘッダ提供元）
+├── picolibc/           picolibc サブモジュール（標準 C ライブラリ、既定）
+├── newlib/             newlib サブモジュール（フォールバック; make NEWLIB=1）
 ├── sysroot/
 │   └── s1c33-none-elf/
-│       ├── include/    newlib ヘッダ + P/ECE 固有ヘッダ
+│       ├── include/    picolibc ヘッダ + P/ECE 固有ヘッダ
 │       └── lib/
 │           ├── piece.ld                      P/ECE リンカースクリプト
 │           ├── crt0.o                        アプリヘッダ + BSS 初期化（LLVM ビルド）
@@ -32,8 +33,9 @@ llvm-c33/
 │           ├── libclang_rt.builtins-s1c33.a  compiler-rt（FP・整数除算ランタイム）
 │           ├── libcxxrt.a                    C++ ランタイムスタブ（operator new/delete 等）
 │           ├── libpceapi.a                   P/ECE カーネル API スタブ（LLVM ビルド）
-│           ├── libpceshim.a                  rand/srand/__assert_func シム
-│           ├── libc.a, libm.a                newlib 標準 C/数学
+│           ├── libpicortt.a                  picolibc リターゲット層（stdout 破棄 + sbrk）
+│           ├── libpceshim.a                  __assert_func/rand シム
+│           ├── libc.a, libm.a                picolibc 標準 C/数学
 │           ├── libmuslib.a                   音楽ライブラリ（tools/muslib/ ソースからビルド）
 │           ├── libsimple.a, libdefinst.a     シンプルライブラリ（tools/simple/ ソースからビルド）
 │           └── libsprite.a                   スプライトライブラリ（tools/sprite/ ソースからビルド）
@@ -52,23 +54,24 @@ llvm-c33/
 
 ## 1. sysroot の構築（初回のみ）
 
-標準 C ヘッダ（newlib）と P/ECE 固有ヘッダ、ランタイムライブラリをすべてまとめてビルドする。
+標準 C ヘッダ（picolibc）と P/ECE 固有ヘッダ、ランタイムライブラリをすべてまとめてビルドする。
 ヘッダ・ライブラリの内容を変更しない限り再実行不要。
 
 ```sh
-# CRT・カーネル API スタブのビルド + newlib ヘッダのインストール + 各ライブラリのソースビルド（一括）
+# CRT・カーネル API スタブ + picolibc + リターゲット層 + 各ライブラリ（一括）
 make -C tools/crt
+# newlib で組む場合（フォールバック）: make -C tools/crt NEWLIB=1
 ```
 
-この 1 コマンドで以下がすべて自動的に実行される：
+この 1 コマンドで以下がすべて自動的に実行される（既定 = picolibc）：
 
-1. newlib サブモジュールから標準 C ヘッダを sysroot にインストール
+1. picolibc を meson + ninja でビルドし、標準 C ヘッダを sysroot にインストール
 2. P/ECE 固有ヘッダ（`piece.h`、`draw.h` 等）を `tools/crt/include/` からコピー
 3. Clang 組み込みと競合するヘッダ（`stddef.h`、`stdarg.h`、`float.h`）を除去
 4. `crt0.o`・`crti.o`・`libpceapi.a` を LLVM でビルド
 5. `libclang_rt.builtins-s1c33.a`（compiler-rt; fp.lib/idiv.lib の後継）を cmake でビルド
-6. newlib の `libc.a` / `libm.a` を S1C33 向けにビルド
-7. `libmuslib.a`（音楽）と `libpceshim.a`（newlib シム）をソースからビルド
+6. picolibc の `libc.a` / `libm.a` を sysroot へインストール
+7. `libpicortt.a`（picolibc リターゲット層）、`libmuslib.a`（音楽）、`libpceshim.a`（シム）をソースからビルド
 
 シンプルライブラリ `libsimple.a` とスプライトライブラリ `libsprite.a` は `tools/simple/` と `tools/sprite/` で個別に `make` する：
 
@@ -90,27 +93,28 @@ make -C tools/sprite   # libsprite.a を sysroot へインストール
 
 **デフォルトライブラリ（正式リンク順）：**
 
-リンク順は `clang/lib/Driver/ToolChains/BareMetal.cpp` の S1C33 分岐で固定:
+リンク順は `clang/lib/Driver/ToolChains/PIECE.cpp` の S1C33 分岐で固定:
 ```
 -lclang_rt.builtins-s1c33
 --start-group
-  -lcxxrt -lpceapi -lpceshim
-  -lc -lm                          ← newlib
+  -lcxxrt -lpceapi -lpicortt -lpceshim
+  -lc -lm                          ← picolibc
 --end-group
 ```
 
-`libpceshim.a` は `-lc` の前に置かれ、newlib の `rand` / `srand` / `__assert_func` を小型の単一スレッド版で上書きしてバイナリサイズを削減します。`-lc -lm` (newlib) が標準 C/数学関数の全シンボル (`printf`, `malloc`, `sin`, `strtok`, ...) を供給します。
+`libpicortt.a` は `-lc` の前に置かれ、その強シンボル `stdin`/`stdout`/`stderr`（stdout 破棄コンソール）と `sbrk` が picolibc の弱い既定を上書きします（picolibc 内蔵の `picosbrk.o` が `__heap_start`/`__heap_end` を要求するのを抑止）。`libpceshim.a` も `-lc` の前に置かれ、picolibc の `__assert_func`（放置すると stdio を引き込む）を小型版で上書きします。`-lc -lm` (picolibc) が標準 C/数学関数の全シンボル (`printf`, `malloc`, `sin`, ...) を供給します（数学は `libc.a` に統合され `libm.a` は空スタブ）。
 
 | ライブラリ | 提供元 | 主な提供シンボル |
 |---|---|---|
 | `libclang_rt.builtins-s1c33.a` | compiler-rt（LLVM ビルド） | `__addsf3`、`__divsi3`、`__fixsfdi`、`__floatdisf` 等 FP・整数除算・i64 変換ランタイム |
-| `libcxxrt.a` | `tools/crt/cxxrt.c` 等（LLVM ビルド） | `operator new/delete`、`__cxa_pure_virtual` 等 C++ ランタイム |
-| `libpceapi.a` | `tools/crt/gen_pceapi.py`（LLVM ビルド） | `pceLCDTrans`、`pcePadGet` 等 カーネル API スタブ |
-| `libpceshim.a` | `tools/pceshim/`（LLVM ビルド） | newlib の `rand` / `srand` / `__assert_func` を小型の単一スレッド版で上書き（バイナリ縮小用シム） |
-| `libc.a` | newlib (`newlib/` サブモジュール、tools/crt/Makefile でビルド) | `printf`、`malloc`、`strtod`、`strtok`、`setjmp`、`atoi`、`rand`、`memset`、`memcpy`、`strlen`、`isalpha`、`isdigit`、`tolower` 等 ANSI C 標準 |
-| `libm.a` | newlib（同上） | `sin`、`cos`、`pow`、`sqrt`、`atan2`、`exp`、`log`、`fabs`、`fmod` 等 数学関数 |
+| `libcxxrt.a` | `tools/crt/cxxrt.c` 等（LLVM ビルド） | `operator new/delete`（→ `pceHeapAlloc`/`pceHeapFree`）、`__cxa_pure_virtual` 等 C++ ランタイム |
+| `libpceapi.a` | `tools/crt/gen_pceapi.py`（LLVM ビルド） | `pceLCDTrans`、`pcePadGet`、`pcesprintf` 等 カーネル API スタブ |
+| `libpicortt.a` | `tools/picortt/`（LLVM ビルド） | `stdin`/`stdout`/`stderr`（出力は破棄、入力は EOF）、`sbrk`（カーネル pceHeap zone の上に伸びる libc ヒープ） |
+| `libpceshim.a` | `tools/pceshim/`（LLVM ビルド） | picolibc の `__assert_func`（+ `rand`/`srand`）を小型の単一スレッド版で上書き |
+| `libc.a` | picolibc (`picolibc/` サブモジュール、tools/crt/Makefile が meson でビルド) | `printf`、`malloc`、`strtod`、`strtok`、`setjmp`、`atoi`、`rand`、`memset`、`memcpy`、`strlen`、`isalpha`、`isdigit`、`tolower` 等 ANSI C 標準（数学関数も統合） |
+| `libm.a` | picolibc（同上） | 空スタブ（数学は `libc.a` 側）。`-lm` 互換のために存在 |
 
-> **newlib Phase 2 完了 (2026-05)**: Stage A (newlib と gcc33 era SDK ライブラリの並列リンク、newlib 優先) を経て Stage B が完了し、gcc33 era の `libio.a / liblib.a / libmath.a / libstring.a / libctype.a` (SRF→ELF 変換版) はリンク行から外され、sysroot にも生成されなくなりました。既知の EPSON `lib.lib` バグ (sin / pow / strtod / strtok / ispunct) は newlib 版で解消済み。
+> **picolibc 移行完了 (2026-06)**: 既知の EPSON `lib.lib` バグ (sin / pow / strtod / strtok / ispunct) は、まず newlib (Phase 2 Stage A/B、2026-05) で解消され、2026-06 に picolibc へ移行しました。picolibc の tinystdio は `printf`/`sprintf` が malloc 非依存で、`malloc`/`strdup` 等を呼ばないアプリには `sbrk` もリンクされません（`--gc-sections` で除去）。newlib は `make -C tools/crt NEWLIB=1` のフォールバックとして保持。printf/scanf のバリアントは `-mprintf=`/`-mscanf=` でリンク時選択できます（後述）。
 
 **オプションライブラリ（明示指定のみ）：**
 
@@ -203,6 +207,37 @@ build/bin/clang \
 > 「既知外部関数」として扱うため、ランタイムスタブは
 > ネイティブ ELF でなければならない（LTO ビットコード版では解決されない）。
 
+#### printf / scanf バリアントの選択（`-mprintf=` / `-mscanf=`）
+
+picolibc は printf/scanf を機能別の複数バリアント（`double` / `float` /
+`long-long` / `integer` / `minimal`、機能が小さいほどコードも小さい）で
+提供する。既定は `double`（float も long long も扱える）。アプリ側で
+`-mprintf=`/`-mscanf=` を指定すると、リンク時に該当バリアントへ切り替わる
+（内部的には `--defsym=vfprintf=__<v>_vfprintf` を発行）。
+
+```sh
+# 整数のみで十分なアプリ（大幅に小さくなる）
+build/bin/clang --sysroot=sysroot/s1c33-none-elf -O2 \
+    -mprintf=integer -mscanf=integer app.c -o app.elf
+```
+
+| 値 | 機能 | 目安（snprintf 1 個のアプリの .text） |
+|---|---|---|
+| `double`（既定） | float/double + C99 + 位置指定 | ~7.2 KB |
+| `float` | float（double は float に縮約） | （double より小） |
+| `long-long` | 整数 + long long | |
+| `integer` | 整数のみ | ~3.0 KB |
+| `minimal` | 最小（幅指定等も削減） | ~2.1 KB |
+
+補足:
+- **`sprintf`/`vsprintf` は piece.h が既定でカーネルの `pcesprintf`/`pcevsprintf`
+  （整数のみ）に `#define` する**ため、`-mprintf=` の対象は主に `printf` /
+  `snprintf` / `fprintf`。float が必要で libc 側 `sprintf` を使いたい場合は
+  `NOPCESPRINTF` を定義してから `<stdio.h>` を include する。
+- **LTO 併用時は `--defsym` 別名が効かない**ため、ライブラリ既定（double）が
+  使われる。サイズを詰めたい整数アプリは LTO と `-mprintf=integer` のどちらを
+  取るか選ぶことになる。
+
 #### アセンブリ出力を確認したい場合
 
 ```sh
@@ -246,7 +281,7 @@ clang は自動的に以下を行う：
 - `-m elf32ls1c33` エミュレーション指定
 - `sysroot/s1c33-none-elf/lib/crt0.o` をスタートアップとして追加
 - `sysroot/s1c33-none-elf/lib/piece.ld` をデフォルトリンカースクリプトとして使用
-- `-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lpceshim -lc -lm --end-group` を自動リンク
+- `-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lpicortt -lpceshim -lc -lm --end-group` を自動リンク
 
 `-nostdlib` を指定するとスタートアップもライブラリも追加されない（手動リンク用）。
 
@@ -263,7 +298,7 @@ build/bin/ld.lld \
     -L build/lib/clang/22/lib/s1c33-unknown-none-elf \
     -lclang_rt.builtins-s1c33 \
     --start-group \
-    -lcxxrt -lpceapi -lpceshim -lc -lm \
+    -lcxxrt -lpceapi -lpicortt -lpceshim -lc -lm \
     --end-group \
     -o hello.elf
 ```
@@ -390,22 +425,23 @@ tools/ppack/ppack -e hello.elf -ohello.pex -n"Hello World"
 sysroot が構築されていないか、`--sysroot` が指定されていない。
 §1 の手順で sysroot を構築してから `--sysroot=sysroot/s1c33-none-elf` を指定する。
 
-ライブラリとシンボルの対応 (newlib Phase 2 Stage B 完了後):
+ライブラリとシンボルの対応 (picolibc 移行後):
 
 | シンボル | 提供元 |
 |---|---|
-| `pceLCDTrans`, `pcePadGet` 等 | `libpceapi.a`（`gen_pceapi.py` + `vector.h` から自動生成） |
-| `printf`, `sprintf`, `vfprintf` 等 stdio | `libc.a` (newlib) |
-| `malloc`, `free`, `realloc`, `calloc` | `libc.a` (newlib nano-malloc) |
-| `atoi`, `strtol`, `strtod`, `rand` 等 | `libc.a` (newlib) |
-| `sin`, `cos`, `pow`, `sqrt`, `atan2` 等 | `libm.a` (newlib) |
-| `memset`, `memcpy`, `strlen`, `strcpy` 等 | `libc.a` (newlib) |
-| `isalpha`, `tolower`, `isdigit` 等 | `libc.a` (newlib) |
-| `setjmp`, `longjmp` | `libc.a` (newlib `libc/machine/s1c33/`) |
-| `_sbrk`, `_write`, `_exit` 等 syscall stub | `libc.a` (newlib `libc/sys/s1c33/`) |
+| `pceLCDTrans`, `pcePadGet`, `pcesprintf` 等 | `libpceapi.a`（`gen_pceapi.py` + `vector.h` から自動生成） |
+| `printf`, `snprintf`, `vfprintf` 等 stdio | `libc.a` (picolibc) |
+| `malloc`, `free`, `realloc`, `calloc` | `libc.a` (picolibc) |
+| `atoi`, `strtol`, `strtod`, `rand` 等 | `libc.a` (picolibc) |
+| `sin`, `cos`, `pow`, `sqrt`, `atan2` 等 | `libc.a` (picolibc; 数学も統合済み) |
+| `memset`, `memcpy`, `strlen`, `strcpy` 等 | `libc.a` (picolibc) |
+| `isalpha`, `tolower`, `isdigit` 等 | `libc.a` (picolibc; `_ctype_b` 等の表も内蔵) |
+| `setjmp`, `longjmp` | `libc.a` (picolibc `libc/machine/s1c33/`) |
+| `stdin`, `stdout`, `stderr`, `sbrk` | `libpicortt.a`（`tools/picortt/`） |
+| `_exit`, `abort` | `libcxxrt.a`（`tools/crt/halt.c`） |
 | `__addsf3`, `__mulsf3`, `__fixsfdi` 等（float） | `libclang_rt.builtins-s1c33.a`（compiler-rt） |
 | `__divsi3`, `__modsi3`, `__divdi3` 等（除算） | `libclang_rt.builtins-s1c33.a`（compiler-rt） |
-| `rand`, `srand`, `__assert_func`（shim） | `libpceshim.a`（newlib 版をシャドウ） |
+| `__assert_func`, `rand`, `srand`（shim） | `libpceshim.a`（picolibc 版をシャドウ） |
 
 ### `mlt.w: instruction requires a CPU feature not currently enabled`
 
@@ -447,14 +483,15 @@ build/bin/llvm-objdump --mcpu=s1c33209 -d hello.elf
 `S1C33ISelLowering.cpp` の `LowerCall` に問題がある可能性がある。
 現在の実装では間接呼び出しに `call %rb` 命令が正しく選択される。
 
-### `_malloc_r` 内で alignment exception が出る、または free list が壊れる
+### `malloc` でヒープが壊れる / alignment exception が出る
 
-newlib のヒープ領域 (sbrk が割り当てる範囲) を超えて kernel pceHeap が
+libc のヒープ領域 (`sbrk` が割り当てる範囲) を超えて kernel pceHeap が
 書き込んでいる可能性がある。アプリ作者ができる調整:
 
 - `-Wl,--defsym=_pceheapsize=N` で kernel pceHeap zone のサイズを増やす
   (デフォルト 0x2000 = 8 KB)
-- 自前の `_sbrk` を実装してリンクし、別領域でヒープを管理する
+- 自前の `sbrk` を実装してリンクし、別領域でヒープを管理する（`libpicortt.a`
+  より前に置けば上書きできる）
 - 詳細は `docs/piece-symbols.md` 参照
 
 ### システムメニューが開けない / `pceLCDSetBuffer(_def_vbuff)` で挙動がおかしい
@@ -474,10 +511,39 @@ error / version_check の 3 経路は同じ 4 KB 領域を時間多重で使う�
 
 ---
 
-## newlib ポートのメンテナンス
+## picolibc ポートのメンテナンス
 
-通常のアプリ開発者には不要な情報。`newlib/newlib/libc/sys/s1c33/` や
-`newlib/newlib/libc/machine/s1c33/` を編集するときのみ参照する。
+通常のアプリ開発者には不要な情報。既定 libc である picolibc は
+meson でビルドされる（autotools は不要）。S1C33 固有部分は picolibc
+サブモジュール内の以下に閉じている:
+
+| ファイル | 役割 |
+|---|---|
+| `picolibc/libc/machine/s1c33/{setjmp,longjmp}.S` | setjmp / longjmp（S5U1C33000C ABI、`_JBLEN=6`） |
+| `picolibc/libc/machine/s1c33/meson.build` | machine ソース登録 |
+| `picolibc/libc/include/machine/setjmp.h` | `__s1c33__`: `_JBLEN=6` / `_JBTYPE=int` |
+| `picolibc/libc/include/machine/ieeefp.h` | `__s1c33__`: little-endian 宣言 |
+| `tools/crt/cross-s1c33-none-piece.txt` | meson クロスファイル（Makefile が生成） |
+| `tools/crt/Makefile`（`PICOLIBC_MESON_OPTS`） | tinystdio / single-thread / global errno / no-TLS / `io-float-exact=false` / `format-default=double` 等のビルドオプション |
+| `tools/picortt/{console,picesbrk}.c` | stdout 破棄コンソール + sbrk リターゲット |
+
+`PICOLIBC_MESON_OPTS` を変更すると、`build.ninja` が Makefile を
+prerequisite に持つため自動で再構成される。これらを編集して
+`make -C tools/crt` すれば反映される。
+
+> **printf/scanf バリアントの仕組み**: picolibc は variant ごとの
+> `__d_/__f_/__l_/__i_/__m_vfprintf` を全て持ち、リンク時に
+> `--defsym=vfprintf=__<v>_vfprintf` で選ぶ。本ツールチェインでは
+> `-mprintf=`/`-mscanf=`（`PIECE.cpp`）がこの `--defsym` を発行する。
+> `format-default=double` が、`-mprintf=` 未指定時の既定を決める。
+
+---
+
+## newlib ポートのメンテナンス（フォールバック）
+
+picolibc 移行 (2026-06) 以降、newlib は `make -C tools/crt NEWLIB=1` で
+ビルドするフォールバック扱い。通常は不要。`newlib/newlib/libc/sys/s1c33/`
+や `newlib/newlib/libc/machine/s1c33/` を編集するときのみ参照する。
 
 ### 既存ソースの編集 (configure.host / *.c / *.S)
 

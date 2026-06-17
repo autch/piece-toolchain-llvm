@@ -17,13 +17,13 @@ Generates binaries ABI-compatible with the existing P/ECE SDK libraries.
 | ターゲット CPU | EPSON S1C33000 (S1C33209) — 32-bit RISC, 16-bit fixed-width instructions |
 | ターゲットデバイス | Aquaplus P/ECE |
 | トリプル | `s1c33-none-piece`（P/ECE 向け、ビルド既定）/ `s1c33-none-elf`（ベアメタル） |
-| ステータス | **Phase 6 完了 + compiler-rt Phase 1 / newlib Phase 2 Stage B 完了 + simple/sprite ライブラリのソースビルド化完了** — 実機動作確認済み（2026-03〜05） |
+| ステータス | **Phase 6 完了 + compiler-rt Phase 1 + simple/sprite ライブラリのソースビルド化 + 標準 C ライブラリの picolibc 移行完了** — 実機動作確認済み（2026-03〜06） |
 | ベース LLVM | llvm-project (サブモジュール, `llvm/` 以下) |
 
 P/ECE SDK のバイナリ配布ライブラリ群はすべて LLVM 上で再実装するかソースから再ビルドするよう移行済みです:
 - カーネル API スタブ (`pceapi.lib`) → **`tools/crt/gen_pceapi.py` がカーネル ROM のシンボルテーブル (`vector.h`) から関数スタブを自動生成**
 - 浮動小数点・整数除算 (`fp.lib`, `idiv.lib`) → **LLVM compiler-rt** (`libclang_rt.builtins-s1c33.a`)
-- 標準 C / 数学 (`lib.lib`, `math.lib`, `io.lib`, `string.lib`, `ctype.lib`) → **newlib** `libc.a` / `libm.a` (Phase 2 Stage B、2026-05)
+- 標準 C / 数学 (`lib.lib`, `math.lib`, `io.lib`, `string.lib`, `ctype.lib`) → **picolibc** `libc.a` / `libm.a`（2026-06 に newlib から移行。newlib は `make NEWLIB=1` のフォールバックとして保持）
 - シンプル / スプライト / 音楽 (`simple.lib`, `sprite.lib`, `muslib.lib`) → **`tools/{simple,sprite,muslib}/` の C/asm ソースからビルド**
 
 これにより通常ビルドフロー (`make`、`make -C tools/crt`、`make -C tools/{simple,sprite,muslib}`) は EPSON SDK のバイナリ `.lib` を一切読みません。`tools/srf2elf/` は `make regen-builtins-asm` 開発時専用ターゲットでのみ使われ、compiler-rt が必要とする関数を `fp.lib` / `idiv.lib` から回収するためのアセンブリ抽出に用います。
@@ -35,7 +35,8 @@ either an LLVM-side re-implementation or a from-source rebuild:
 - Floating-point / integer division (`fp.lib`, `idiv.lib`) → **LLVM
   compiler-rt** (`libclang_rt.builtins-s1c33.a`).
 - Standard C / math (`lib.lib`, `math.lib`, `io.lib`, `string.lib`,
-  `ctype.lib`) → **newlib** `libc.a` / `libm.a` (Phase 2 Stage B, 2026-05).
+  `ctype.lib`) → **picolibc** `libc.a` / `libm.a` (migrated from newlib in
+  2026-06; newlib retained as a `make NEWLIB=1` fallback).
 - Simple / sprite / music (`simple.lib`, `sprite.lib`, `muslib.lib`) →
   built from the C / asm sources under **`tools/{simple,sprite,muslib}/`**.
 
@@ -56,8 +57,8 @@ The following applications have been verified on a real P/ECE device.
 |---|---|---|
 | `mini_nocrt/` | crt0 手書き、手動リンク | 画面描画・ST+SL でメニュー復帰 |
 | `minimal/` | sysroot の crt0 + pceapi | 同上 |
-| `hello/` | sysroot CRT + newlib (`printf` 等) | `printf` 表示・システムメニュー・メニュー復帰 |
-| `jien/` | sysroot CRT + newlib + 描画ライブラリ | ビットマップ表示・構造体値渡し（`pceLCDDrawObject`） |
+| `hello/` | sysroot CRT + libc (`printf` 等) | `printf` 表示・システムメニュー・メニュー復帰 |
+| `jien/` | sysroot CRT + libc + 描画ライブラリ | ビットマップ表示・構造体値渡し（`pceLCDDrawObject`） |
 | `fpkplay/` | sysroot CRT + libmuslib (ソースビルド) + LZSS | FPK 音楽再生（8kHz/16kHz波形合成） |
 | `cpptest/` | sysroot CRT + libcxxrt | C++ クラス・仮想関数・例外なし RTTI なし運用 |
 | `menu2/` | sysroot CRT + 旧 SDK 比較ベース | gcc33 とのバイナリ差分検証 |
@@ -77,7 +78,8 @@ llvm-c33/
 ├── llvm/                   LLVM サブモジュール (llvm-project)
 │   ├── llvm/lib/Target/S1C33/   バックエンド実装
 │   └── compiler-rt/lib/builtins/s1c33/  compiler-rt S1C33 builtins
-├── newlib/                 newlib サブモジュール（標準 C ヘッダ提供）
+├── picolibc/               picolibc サブモジュール（標準 C ライブラリ、既定）
+├── newlib/                 newlib サブモジュール（フォールバック; make NEWLIB=1）
 ├── build/                  CMake ビルドディレクトリ（初回 cmake 後に生成）
 ├── sdk/                    P/ECE SDK（別途入手・配置）
 │   ├── include/
@@ -89,7 +91,8 @@ llvm-c33/
 │   ├── simple/             シンプルライブラリのソースビルド（libsimple.a）
 │   ├── sprite/             スプライトライブラリのソースビルド（libsprite.a）
 │   ├── muslib/             音楽ライブラリのソースビルド（libmuslib.a）
-│   ├── pceshim/            newlib の rand/srand/__assert_func を上書きする軽量シム
+│   ├── picortt/            picolibc リターゲット層（stdout 破棄コンソール + sbrk）
+│   ├── pceshim/            libc の __assert_func/rand を上書きする軽量シム
 │   ├── srf2elf/            SRF33 → ELF 変換ツール（Python; 通常ビルドでは未使用、`make regen-builtins-asm` 開発時専用）
 │   ├── elf2srf/            ELF → SRF33 変換ツール（Python, 実験的）
 │   ├── ppack/              ELF → .pex パッケージャ（C++, cmake）
@@ -124,7 +127,7 @@ See [`docs/setup.md`](docs/setup.md) for full instructions.
 
 ```sh
 # Debian/Ubuntu
-sudo apt install git cmake ninja-build g++ python3 zlib1g-dev ccache
+sudo apt install git cmake ninja-build meson g++ python3 zlib1g-dev ccache
 ```
 
 | ツール | 最低バージョン |
@@ -132,6 +135,7 @@ sudo apt install git cmake ninja-build g++ python3 zlib1g-dev ccache
 | Git | 2.13 |
 | CMake | 3.13 |
 | Ninja | any |
+| Meson | 0.61（picolibc のビルドに必須） |
 | GCC / Clang (ホスト用) | GCC 7 / Clang 6 |
 | Python 3 | 3.6 |
 | ccache | any（推奨） |
@@ -139,8 +143,8 @@ sudo apt install git cmake ninja-build g++ python3 zlib1g-dev ccache
 ### クイックスタート / Quick Start
 
 ```sh
-# 1. サブモジュール取得 / Fetch submodules (LLVM + newlib)
-git submodule update --init llvm newlib
+# 1. サブモジュール取得 / Fetch submodules (LLVM + picolibc; newlib is the fallback)
+git submodule update --init llvm picolibc newlib
 
 # 2. LLVM ビルド / Build LLVM
 mkdir build && cd build
@@ -161,8 +165,9 @@ cd ..
 cd tools/ppack && cmake -G Ninja -B _build -DCMAKE_BUILD_TYPE=Release . && ninja -C _build
 cp _build/ppack ppack && cd ../..
 
-# 4. sysroot 一括ビルド（CRT + newlib + compiler-rt + pceapi + muslib + pceshim）
-# Build sysroot: CRT + newlib + compiler-rt + pceapi + muslib + pceshim
+# 4. sysroot 一括ビルド（CRT + picolibc + picortt + compiler-rt + pceapi + muslib + pceshim）
+# Build sysroot: CRT + picolibc + picortt + compiler-rt + pceapi + muslib + pceshim
+# （newlib で組む場合は `make -C tools/crt NEWLIB=1`）
 make -C tools/crt
 
 # 5. シンプル / スプライトライブラリ (使うアプリ向け) / Optional libraries
@@ -197,10 +202,10 @@ build/bin/clang \
 tools/ppack/ppack -e myapp.elf -omyapp.pex -n"My App"
 ```
 
-`clang` は自動的に crt0.o / piece.ld / `-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lpceshim -lc -lm --end-group` を追加します。
+`clang` は自動的に crt0.o / piece.ld / `-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lpicortt -lpceshim -lc -lm --end-group` を追加します。`-mprintf=`/`-mscanf=`（`double`/`float`/`long-long`/`integer`/`minimal`）で picolibc の printf/scanf バリアントをリンク時に選べます（既定は double）。
 
 `clang` automatically adds crt0.o, piece.ld, and
-`-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lpceshim -lc -lm --end-group`.
+`-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lpicortt -lpceshim -lc -lm --end-group`. Use `-mprintf=`/`-mscanf=` (`double`/`float`/`long-long`/`integer`/`minimal`) to pick the picolibc printf/scanf variant at link time (default: double).
 
 ### アプリケーションが実装するコールバック / Application Callbacks
 
@@ -226,7 +231,8 @@ void pceAppExit(void)    { /* called at termination  */ }
 - **crt0** — `pceAPPHEAD` 構造体配置・BSS ゼロクリア・バージョンチェック・コールバックラッパー
 - **libpceapi** — カーネル API スタブ自動生成（`gen_pceapi.py` + `vector.h`）
 - **compiler-rt** — 浮動小数点・整数除算・64bit 整数演算ランタイム (`libclang_rt.builtins-s1c33.a`)。fp.lib/idiv.lib を完全置き換え
-- **newlib** — 標準 C ヘッダ + `libc.a` / `libm.a` 本体（`printf` / `malloc` / `sin` / `strtod` / `setjmp` 等）。`lib.lib` / `math.lib` / `io.lib` / `string.lib` / `ctype.lib` を完全置き換え（Phase 2 Stage B、2026-05）
+- **picolibc** — 標準 C ヘッダ + `libc.a` / `libm.a` 本体（`printf` / `malloc` / `sin` / `strtod` / `setjmp` 等）。`lib.lib` / `math.lib` / `io.lib` / `string.lib` / `ctype.lib` を完全置き換え。2026-06 に newlib から移行（newlib は `make NEWLIB=1` フォールバック）。tinystdio により `printf`/`sprintf` が malloc 非依存で、未使用なら sbrk もリンクされない。リターゲット層は `tools/picortt/`（stdout 破棄コンソール + sbrk）
+- **picolibc printf/scanf バリアント** — `-mprintf=`/`-mscanf=` でリンク時に integer / float / double 等を選択（`--defsym` 別名方式）。整数のみアプリは大幅に縮小
 - **simple / sprite / muslib ソースビルド** — シンプル・スプライト・音楽ライブラリは `tools/{simple,sprite,muslib}/` 配下の C/asm ソースから LLVM でビルド。asm ソースは `tools/asm33conv/` で as33 拡張ニーモニックを LLVM 標準命令に展開してからアセンブル
 - **C++ サポート** — `libcxxrt.a` による `__cxa_*` スタブ・`operator new/delete`（`-fno-exceptions -fno-rtti` 前提）
 - **`libpceapi.a` のソース生成** — カーネル ROM シンボルテーブル `vector.h` から `tools/crt/gen_pceapi.py` がスタブを自動生成（`pceapi.lib` の SRF33 変換は不要）
@@ -266,7 +272,7 @@ Reference materials in `docs/` (Japanese PDFs):
 
 P/ECE SDK（`sdk/`）は **このリポジトリには含まれていません**。
 
-**ビルドフローは P/ECE SDK を必要としません** — `make -C tools/crt` で sysroot を構築し、`make -C tools/{simple,sprite}` でライブラリをビルドし、`app/<sample>` で `.pex` を生成するところまで、ホスト上で完結します（カーネル API スタブは `gen_pceapi.py`、標準 C/数学は newlib、シンプル/スプライト/音楽は `tools/{simple,sprite,muslib}/` のソース、浮動小数点・整数除算は compiler-rt が供給）。
+**ビルドフローは P/ECE SDK を必要としません** — `make -C tools/crt` で sysroot を構築し、`make -C tools/{simple,sprite}` でライブラリをビルドし、`app/<sample>` で `.pex` を生成するところまで、ホスト上で完結します（カーネル API スタブは `gen_pceapi.py`、標準 C/数学は picolibc、シンプル/スプライト/音楽は `tools/{simple,sprite,muslib}/` のソース、浮動小数点・整数除算は compiler-rt が供給）。
 
 SDK が必要になるのは以下の用途のみ:
 
@@ -277,7 +283,7 @@ SDK が必要になるのは以下の用途のみ:
 
 The P/ECE SDK (`sdk/`) is **not included** in this repository.
 
-**The build flow does not require the P/ECE SDK** — `make -C tools/crt` builds the sysroot, `make -C tools/{simple,sprite}` builds the libraries, and `app/<sample>` builds a `.pex` entirely on the host (kernel API stubs come from `gen_pceapi.py`, standard C / math from newlib, simple / sprite / music from sources under `tools/{simple,sprite,muslib}/`, and FP / integer division from compiler-rt).
+**The build flow does not require the P/ECE SDK** — `make -C tools/crt` builds the sysroot, `make -C tools/{simple,sprite}` builds the libraries, and `app/<sample>` builds a `.pex` entirely on the host (kernel API stubs come from `gen_pceapi.py`, standard C / math from picolibc, simple / sprite / music from sources under `tools/{simple,sprite,muslib}/`, and FP / integer division from compiler-rt).
 
 The SDK is only needed for:
 

@@ -11,7 +11,8 @@
 |---|---|---|
 | Git | 2.13 以上 | サブモジュール取得 |
 | CMake | 3.13 以上 | LLVM・ppack のビルド設定 |
-| Ninja | 任意 | LLVM のビルド実行 |
+| Ninja | 任意 | LLVM および picolibc のビルド実行 |
+| Meson | 0.61 以上 | picolibc のビルド設定（既定 libc） |
 | C/C++ コンパイラ | GCC 7 / Clang 6 以上 | LLVM・ppack のホストコンパイル |
 | Python 3 | 3.6 以上 | `gen_pceapi.py` (libpceapi スタブ生成)・`asm33conv.py` (シンプル/スプライト ライブラリの asm 変換) ほか |
 | zlib 開発ヘッダ | 任意 | ppack のリンク依存 |
@@ -21,26 +22,26 @@
 Debian/Ubuntu 系での一括インストール例：
 
 ```sh
-sudo apt install git cmake ninja-build g++ python3 zlib1g-dev
+sudo apt install git cmake ninja-build meson g++ python3 zlib1g-dev
 ```
 
-> **autoconf/automake について**: newlib のサブモジュールには既に再生成済みの `configure` と `Makefile.in` が同梱されており、通常のビルドで autotools は呼ばれません。`newlib/newlib/configure.host` や `acinclude.m4` を編集して再生成が必要になった場合のみ、autoconf 2.69 / automake 1.15.1 を **厳密に一致するバージョン** で用意する必要があります (newer/older は互換性なし)。Debian 13 など 2.72 / 1.17 が標準の環境では `~/local/autotools/` 等にソースから入れることになります。詳細は `docs/build-howto.md` の「newlib ポートのメンテナンス」節を参照。
+> **autoconf/automake について**: 既定の libc は picolibc（meson ビルド）になったため、autotools は通常のビルドでは一切呼ばれません。以下は `make NEWLIB=1` でフォールバックの newlib をビルドし、かつその `configure.host` 等を編集して再生成する場合のみ必要です。newlib のサブモジュールには再生成済みの `configure` と `Makefile.in` が同梱されています。`newlib/newlib/configure.host` や `acinclude.m4` を編集して再生成が必要になった場合のみ、autoconf 2.69 / automake 1.15.1 を **厳密に一致するバージョン** で用意する必要があります (newer/older は互換性なし)。Debian 13 など 2.72 / 1.17 が標準の環境では `~/local/autotools/` 等にソースから入れることになります。詳細は `docs/build-howto.md` の「newlib ポートのメンテナンス」節を参照。
 
 ---
 
 ## 1. サブモジュールの初期化
 
-LLVM 本体と newlib はサブモジュールとして管理されている。
+LLVM 本体と picolibc（既定 libc）、newlib（フォールバック）はサブモジュールとして管理されている。
 
 ```sh
-git submodule update --init llvm newlib
+git submodule update --init llvm picolibc newlib
 ```
 
 > **注意:** `llvm/` は llvm-project 全体（数 GB）をチェックアウトする。
 > 通信帯域に制約がある場合は `--depth 1` を加えてシャロークローンにできる：
 >
 > ```sh
-> git submodule update --init --depth 1 llvm newlib
+> git submodule update --init --depth 1 llvm picolibc newlib
 > ```
 >
 > ただしシャロークローンでは `git log` の履歴が欠落するため、
@@ -114,29 +115,37 @@ cd ../..
 
 コンパイラが参照するヘッダとライブラリを `sysroot/s1c33-none-elf/` に配置する。
 
-P/ECE 純正開発環境の `c:/usr/piece` 以下のうち、`include/` と `lib/` を `sdk/` ディレクトリ以下にコピーすること。標準 C ヘッダは newlib サブモジュールから自動的にインストールされる。
+P/ECE 純正開発環境の `c:/usr/piece` 以下のうち、`include/` と `lib/` を `sdk/` ディレクトリ以下にコピーすること。標準 C ヘッダは picolibc サブモジュール（既定 libc）から自動的にインストールされる。
 
-### 4-1. sysroot の一括ビルド（CRT + newlib + SDK ライブラリ）
+### 4-1. sysroot の一括ビルド（CRT + picolibc + ライブラリ）
 
-スタートアップオブジェクト・newlib (libc / libm)・カーネル API スタブ・SDK ライブラリ変換・compiler-rt をすべてまとめて実行する。
+スタートアップオブジェクト・picolibc (libc / libm)・picolibc リターゲット層・カーネル API スタブ・compiler-rt をすべてまとめて実行する。
 **手順 2 の LLVM ビルドが完了している必要がある。**
 
 ```sh
 make -C tools/crt
 ```
 
+> **既定 libc = picolibc（2026-06〜）**。標準 C / 数学は picolibc が供給する。
+> newlib をビルドしたい場合は `make -C tools/crt NEWLIB=1`（フォールバック扱い。
+> ただしドライバが `-lpicortt` を無条件リンクするため、newlib で動かすには
+> `clang/lib/Driver/ToolChains/PIECE.cpp` のリンク群を戻して clang を再ビルド
+> する必要がある）。`make` と `make NEWLIB=1` を切り替えると、sysroot の
+> `.libc-mode` マーカーが差し替えを検知して libc とヘッダを入れ替える。
+
 以下が自動的に実行される：
 
-1. `newlib/newlib/libc/include/` から標準 C ヘッダを `sysroot/s1c33-none-elf/include/` にインストール
+1. picolibc を meson + ninja で `build/crt/picolibc`（staging prefix `build/crt/picolibc-stage`）にビルドし、標準 C ヘッダを `sysroot/s1c33-none-elf/include/` にインストール
 2. `tools/crt/include/` から P/ECE 固有ヘッダ（`piece.h`、`draw.h`、`s1c33cpu.h` 等）をコピー (オリジナルは `sdk/include/` だが、ビルドからは参照しない reference material 化済み)
 3. `tools/sprite/pclsprite.h` と `tools/simple/{simple,thread}.h` をシンボリックな canonical 元としてコピー
 4. Clang 組み込みと競合するヘッダ（`stddef.h`、`stdarg.h`、`float.h`）を除去
 5. `crt0.o`・`crti.o`・`libpceapi.a` を LLVM でビルド
 6. `libclang_rt.builtins-s1c33.a`（compiler-rt; fp.lib/idiv.lib の後継）を cmake でビルド
-7. **newlib の `libc.a` / `libm.a` を S1C33 向けにビルド** (`build/crt/newlib/` 内で `configure` + `make`)
-8. `libmuslib.a`（音楽ライブラリ、`tools/muslib/` のソースからビルド）と `libpceshim.a`（newlib の `rand` / `__assert_func` を小型版で上書きするシム）をビルド・インストール
+7. **picolibc の `libc.a` / `libm.a` を sysroot へインストール**（手順 1 の staging からコピー）
+8. `libpicortt.a`（picolibc リターゲット層: stdout 破棄コンソール + sbrk）を `tools/picortt/` のソースからビルド
+9. `libmuslib.a`（音楽ライブラリ、`tools/muslib/` のソースからビルド）と `libpceshim.a`（libc の `__assert_func` / `rand` を小型版で上書きするシム）をビルド・インストール
 
-初回ビルドは newlib のフルビルドに数分かかる。以降は差分ビルドで `tools/crt/` 内の変更のみ再ビルドされる。
+初回ビルドは picolibc のフルビルドに数分かかる。以降は差分ビルドで `tools/crt/` 内の変更のみ再ビルドされる。
 
 以下が生成される：
 
@@ -147,11 +156,12 @@ make -C tools/crt
 | `sysroot/s1c33-none-elf/lib/libpceapi.a` | カーネル API スタブ + ユーティリティ |
 | `sysroot/s1c33-none-elf/lib/libclang_rt.builtins-s1c33.a` | compiler-rt（FP 演算・整数除算・i64 算術ランタイム） |
 | `sysroot/s1c33-none-elf/lib/libcxxrt.a` | C++ ランタイムスタブ（operator new/delete 等） |
-| `sysroot/s1c33-none-elf/lib/libc.a` | newlib libc (printf / malloc / strtod / setjmp / 等) |
-| `sysroot/s1c33-none-elf/lib/libm.a` | newlib libm (sin / cos / pow / sqrt / 等) |
+| `sysroot/s1c33-none-elf/lib/libpicortt.a` | picolibc リターゲット層（stdout 破棄コンソール + sbrk） |
+| `sysroot/s1c33-none-elf/lib/libc.a` | picolibc libc (printf / malloc / strtod / setjmp / 等) |
+| `sysroot/s1c33-none-elf/lib/libm.a` | picolibc libm（数学は libc.a に統合済み。本体は空スタブ） |
 | `sysroot/s1c33-none-elf/lib/piece.ld` | リンカスクリプト (P/ECE メモリマップ + ヒープ配置) |
 
-> **newlib Phase 2 完了 (2026-05)**: 既知の EPSON SDK バグ (`sin`, `strtok`, `pow`, `strtod`, `ispunct`) を持つ `lib.lib` / `math.lib` 等は newlib で完全に置き換え済み。Stage A (newlib と SDK 並列リンク) と Stage B (SDK ライブラリ完全削除) を経て、現在のリンク行は `-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lpceshim -lc -lm --end-group` のみ。詳細は `docs/build-howto.md` の「リンク順序」節を参照。
+> **picolibc 移行完了 (2026-06)**: 既知の EPSON SDK バグ (`sin`, `strtok`, `pow`, `strtod`, `ispunct`) を持つ `lib.lib` / `math.lib` 等は、まず newlib (Phase 2 Stage A/B) で置き換えられ、2026-06 に picolibc へ移行した。picolibc の tinystdio は `printf`/`sprintf` が malloc 非依存で、malloc 未使用アプリには sbrk もリンクされない。現在のリンク行は `-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lpicortt -lpceshim -lc -lm --end-group`。`-mprintf=`/`-mscanf=` で printf/scanf バリアントをリンク時選択できる。詳細は `docs/build-howto.md` の「リンク順序」節を参照。
 
 > **注意:** `crt0.o` は `-O1` でコンパイルされる。BSS ゼロクリアループの
 > カウンタ変数が `[SP+0]` に置かれると、カーネルが SP を bss_end に設定した場合に
@@ -180,8 +190,8 @@ ls sysroot/s1c33-none-elf/lib/
 ```
 crt0.o  crti.o  piece.ld
 libclang_rt.builtins-s1c33.a
-libc.a      libm.a                              ← newlib
-libcxxrt.a  libpceapi.a  libpceshim.a           ← C++ ランタイム + カーネル API + newlib シム
+libc.a      libm.a                              ← picolibc
+libcxxrt.a  libpceapi.a  libpicortt.a  libpceshim.a  ← C++ ランタイム + カーネル API + picolibc リターゲット + シム
 libmuslib.a                                     ← 音楽ライブラリ (-lmuslib で明示指定)
 libsimple.a libdefinst.a                        ← シンプルライブラリ (-lsimple で明示指定; make -C tools/simple で生成)
 libsprite.a                                     ← スプライトライブラリ (-lsprite で明示指定; make -C tools/sprite で生成)

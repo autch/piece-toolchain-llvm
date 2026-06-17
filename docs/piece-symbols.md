@@ -35,7 +35,7 @@ SRAM (アプリ領域):
            │ .bss             │  __START_DEFAULT_BSS .. __END_DEFAULT_BSS
            │   _pceheapstart  │  = pceAppHead.bss_end (kernel pceHeap 基点)
            │   kernel pceHeap │  default 8 KB (= _pceheapsize)
-           │   newlib sbrk    │  低位 → 高位、上限チェックなし
+           │   libc sbrk      │  低位 → 高位、上限チェックなし (libpicortt)
            │   ↑ stack        │  _stacklen>0 のとき (SP = bss_end + stacklen)
            │   ...            │
            │ kernel work area │  zlib バッファ等、app から不可侵
@@ -61,7 +61,7 @@ SRAM (アプリ領域):
 | シンボル | 種別 | デフォルト | 用途 |
 |---|---|---|---|
 | `_stacklen` | D | 0 | `pceAppHead.stack_size` に格納される。0 = kernel 既定 (SP=0x2000、IRAM 内)。非零ならスタックは SRAM 内 [bss_end+_pceheapsize, ...] に確保され、SP = `_pceheapstart + _pceheapsize + _stacklen`。 |
-| `_pceheapsize` | D | 0x2000 (8 KB) | kernel pceHeap が使う領域 (規約上のサイズ)。kernel best-fit はここに低位から allocate。超過すると newlib 領域を破壊。 |
+| `_pceheapsize` | D | 0x2000 (8 KB) | kernel pceHeap が使う領域 (規約上のサイズ)。kernel best-fit はここに低位から allocate。超過すると libc (sbrk) 領域を破壊。 |
 | `_pceheapstart` | D | `__END_DEFAULT_BSS` | `pceAppHead.bss_end` に格納されるアドレス。kernel `ResetHeap()` の基点。通常は変更不要。 |
 
 **典型的な上書き例:**
@@ -150,9 +150,9 @@ alias) のままが最も安全。
 | やりたいこと | 推奨手段 |
 |---|---|
 | スタック容量を増やしたい | `-Wl,--defsym=_stacklen=0xN000` (SRAM 側へ移動) |
-| `malloc` を多用するので newlib heap を増やしたい | `-Wl,--defsym=_pceheapsize=0xN000` を増やす — newlib 側は kernel pceHeap zone を超えた所から始まるので、`_pceheapsize` が小さいほうが newlib の使える容量は大きい (kernel に渡す予約量を絞る) |
+| `malloc` を多用するので libc heap を増やしたい | `-Wl,--defsym=_pceheapsize=0xN000` を増やす — libc 側 (`sbrk`) は kernel pceHeap zone を超えた所から始まるので、`_pceheapsize` が小さいほうが libc の使える容量は大きい (kernel に渡す予約量を絞る) |
 | 逆に kernel pceHeap が足りない | `_pceheapsize` を大きく |
-| 自前のヒープ管理を入れたい | newlib `_sbrk` を override (アプリの `.o` に `_sbrk` を定義してリンク順で `-lc` より前に置く) |
+| 自前のヒープ管理を入れたい | `sbrk` を override (アプリの `.o` に `sbrk` を定義してリンク順で `-lpicortt` より前に置く) |
 | IRAM に関数を置きたい | ソースに `__attribute__((section(".fastrun")))`、変数なら `.fastdata` / `.fastbss` |
 | IRAM に置きすぎてないか確認 | リンク時 `ASSERT(__fastrun_end <= 0x2000, ...)` が piece.ld にあり、エラーで弾かれる |
 | version_check のエラー画面 vbuff を別に置きたい | アプリ側で 11 KB の `unsigned char my_vbuff[128*88]` を用意して `-Wl,--defsym=_def_vbuff=&my_vbuff` (実際にはシンボル指定構文の制約があるので、リンカスクリプト経由のほうが楽) |
@@ -170,7 +170,7 @@ ld.lld は **セクションサイズ式に登場するシンボル** に対し�
 セクションサイズ式に登場する仮想シンボル (例えば過去に検討された
 `_heaplen` を `. = . + _heaplen` で使うパターン) は `--defsym` で上書き
 できません。本書の現行設計はこの問題を回避するように作られています。
-詳細は `docs/build-howto.md` の「newlib ポートのメンテナンス」節を参照。
+詳細は `docs/build-howto.md` の「picolibc ポートのメンテナンス」節を参照。
 
 ---
 
@@ -179,7 +179,7 @@ ld.lld は **セクションサイズ式に登場するシンボル** に対し�
 | 文書 | 内容 |
 |---|---|
 | `docs/setup.md` | 環境セットアップ手順 |
-| `docs/build-howto.md` | アプリのビルドフロー、リンク順序、newlib メンテナンス |
+| `docs/build-howto.md` | アプリのビルドフロー、リンク順序、picolibc / newlib メンテナンス |
 | `docs/iram-placement.md` | IRAM 配置の詳細と制約 |
 | `docs/errata.md` | CPU / kernel / SDK 由来の既知バグ |
 | `docs/s1c33000_quick_reference.md` | CPU 命令セット・レジスタ・トラップ |
