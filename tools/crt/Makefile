@@ -84,27 +84,89 @@ NEWLIB_LIBS := \
 	$(SYSROOT)/lib/libc.a \
 	$(SYSROOT)/lib/libm.a
 
-.PHONY: all clean muslib-install pceshim-install regen-builtins-asm
+# -----------------------------------------------------------------------
+# libc selection: picolibc (default) vs newlib (NEWLIB=1, fallback).
+#
+# picolibc is the default libc (verified on hardware, 2026-06).  The
+# newlib build paths are kept intact for rollback: `make NEWLIB=1` rebuilds
+# and overlays the newlib libc.a/libm.a + headers instead.  The two libcs
+# are never built into the sysroot simultaneously; a switch reinstalls the
+# selected one (see the mode marker below).  HEADER_STAMP selects which
+# header-install rule the CRT objects depend on.
+#
+# Driver note: PIECE.cpp links -lpicortt unconditionally and expects the
+# picolibc libc.a, so a newlib sysroot (NEWLIB=1) must be paired with a
+# newlib-built clang driver (revert the PIECE.cpp link group) — newlib is a
+# rollback path, not a runtime-selectable alternative.
+# -----------------------------------------------------------------------
+ifeq ($(NEWLIB),1)
+HEADER_STAMP := $(SYSROOT)/include/.newlib-stamp
+WANT_LIBC    := newlib
+else
+HEADER_STAMP := $(SYSROOT)/include/.picolibc-stamp
+WANT_LIBC    := picolibc
+endif
 
-all: $(SYSROOT)/include/.newlib-stamp \
+# Coexistence mode marker.  newlib and picolibc both install libc.a/libm.a
+# under the same filenames, so make alone cannot tell that a prior
+# `make PICOLIBC=1` overwrote the newlib libs (or vice versa).  The marker
+# file $(SYSROOT)/lib/.libc-mode records the active libc; its recipe runs
+# every build (via FORCE) but only rewrites the file — bumping its mtime —
+# when the requested mode differs.  The libc/header targets list it as a
+# normal prerequisite, so a mode switch makes them out of date and they
+# reinstall the correct libc.  (An order-only guard that deleted files
+# mid-build is unreliable: make caches target existence at graph time.)
+LIBC_MODE_MARKER := $(SYSROOT)/lib/.libc-mode
+
+.PHONY: FORCE
+FORCE:
+
+$(LIBC_MODE_MARKER): FORCE | $(SYSROOT)/lib
+	@cur=$$(cat $@ 2>/dev/null || echo none); \
+	if [ "$$cur" != "$(WANT_LIBC)" ]; then \
+	  echo "libc mode: $$cur -> $(WANT_LIBC)"; \
+	  echo "$(WANT_LIBC)" > $@; \
+	fi
+
+# The FORCE target (defined below for the libc-mode marker) appears before
+# all:, so pin the default goal explicitly.
+.DEFAULT_GOAL := all
+
+.PHONY: all clean muslib-install pceshim-install picortt-install \
+        picolibc-install regen-builtins-asm
+
+COMMON_TARGETS := \
      $(SYSROOT)/lib/crt0.o \
      $(SYSROOT)/lib/crti.o \
      $(SYSROOT)/lib/libpceapi.a \
      $(SYSROOT)/lib/libcxxrt.a \
      $(SYSROOT)/lib/libclang_rt.builtins-s1c33.a \
-     $(NEWLIB_LIBS) \
      $(SYSROOT)/lib/piece.ld \
      muslib-install \
      pceshim-install
 
+ifeq ($(NEWLIB),1)
+all: $(HEADER_STAMP) \
+     $(COMMON_TARGETS) \
+     $(NEWLIB_LIBS)
+else
+all: $(HEADER_STAMP) \
+     $(COMMON_TARGETS) \
+     picolibc-install \
+     picortt-install
+endif
+
 # muslib is built from source in tools/muslib/ (not converted from SDK SRF).
-muslib-install:
+# Order-only dep on HEADER_STAMP: the sub-make compiles against the sysroot
+# headers, which must be installed (newlib or picolibc) first.
+muslib-install: | $(HEADER_STAMP)
 	$(MAKE) -C $(TOPDIR)/tools/muslib install
 
 # pceshim provides tiny replacements (rand/srand, __assert_func) that
 # shadow the newlib versions and break their dependency cascade into
-# malloc and stdio.  See tools/pceshim/ for details.
-pceshim-install:
+# malloc and stdio.  Under picolibc the assert shim is still wanted (its
+# assert_func.c also drags stdio); rand is redundant but harmless.
+pceshim-install: | $(HEADER_STAMP)
 	$(MAKE) -C $(TOPDIR)/tools/pceshim install
 
 $(SYSROOT)/lib/piece.ld: $(TOPDIR)/tools/piece.ld
@@ -130,7 +192,10 @@ clean:
 	      $(SYSROOT)/lib/libstring.a \
 	      $(SYSROOT)/lib/libctype.a
 	rm -f $(SYSROOT)/include/.newlib-stamp
+	rm -f $(SYSROOT)/include/.picolibc-stamp
+	rm -f $(SYSROOT)/lib/libpicortt.a
 	$(MAKE) -C $(TOPDIR)/tools/pceshim clean
+	$(MAKE) -C $(TOPDIR)/tools/picortt clean
 
 $(BUILDDIR):
 	mkdir -p $@
@@ -177,7 +242,7 @@ SIMPLE_HEADER_NAMES := \
 	simple.h \
 	thread.h
 
-$(SYSROOT)/include/.newlib-stamp: $(NEWLIB_INCLUDE) \
+$(SYSROOT)/include/.newlib-stamp: $(NEWLIB_INCLUDE) $(LIBC_MODE_MARKER) \
 	$(addprefix $(LOCALINC)/,$(LOCAL_HEADER_NAMES)) \
 	$(addprefix $(SPRITEINC)/,$(SPRITE_HEADER_NAMES)) \
 	$(addprefix $(SIMPLEINC)/,$(SIMPLE_HEADER_NAMES)) \
@@ -300,11 +365,11 @@ $(SYSROOT)/lib/libclang_rt.builtins-s1c33.a: $(S1C33_ASM_OBJS) $(BUILTIN_C_OBJS)
 
 # crt0.o: application header (pceAPPHEAD at 0x100000), BSS zero-fill,
 #         pceAppInit00/pceAppProc00/pceAppExit00/pceAppNotify00 wrappers.
-$(SYSROOT)/lib/crt0.o: crt0.c | $(BUILDDIR) $(SYSROOT)/lib $(SYSROOT)/include/.newlib-stamp
+$(SYSROOT)/lib/crt0.o: crt0.c | $(BUILDDIR) $(SYSROOT)/lib $(HEADER_STAMP)
 	$(CLANG) $(CFLAGS_CRT) $< -o $@
 
 # crti.o: default pceAppNotify (weak symbol; overridable by the application).
-$(SYSROOT)/lib/crti.o: defnotify.c | $(BUILDDIR) $(SYSROOT)/lib $(SYSROOT)/include/.newlib-stamp
+$(SYSROOT)/lib/crti.o: defnotify.c | $(BUILDDIR) $(SYSROOT)/lib $(HEADER_STAMP)
 	$(CLANG) $(CFLAGS_CRT) $< -o $@
 
 # -----------------------------------------------------------------------
@@ -317,7 +382,7 @@ $(PCEAPI_STUBS_DIR): | $(BUILDDIR)
 	mkdir -p $@
 
 # Step 1: compile/assemble utility sources
-$(BUILDDIR)/version_check.o: version_check.c | $(BUILDDIR) $(SYSROOT)/include/.newlib-stamp
+$(BUILDDIR)/version_check.o: version_check.c | $(BUILDDIR) $(HEADER_STAMP)
 	$(CLANG) $(CFLAGS_CRT) $< -o $@
 
 $(BUILDDIR)/memset.o: memset.s | $(BUILDDIR)
@@ -447,7 +512,7 @@ $(NEWLIB_BUILDDIR)/Makefile: $(NEWLIB_SRC)/configure | $(BUILDDIR)
 # Build & install newlib.  We use install-target-newlib + install-target-libm
 # but redirect into a staging dir so the existing sysroot include layout is
 # not touched; only libc.a / libm.a are then copied out.
-$(NEWLIB_LIBS) &: $(NEWLIB_BUILDDIR)/Makefile | $(SYSROOT)/lib
+$(NEWLIB_LIBS) &: $(NEWLIB_BUILDDIR)/Makefile $(LIBC_MODE_MARKER) | $(SYSROOT)/lib
 	$(MAKE) -C $(NEWLIB_BUILDDIR)
 	@# The build dir layout puts libc.a / libm.a directly at the build root
 	@# for non-recursive newlib.  Locate and copy them.
@@ -457,3 +522,112 @@ $(NEWLIB_LIBS) &: $(NEWLIB_BUILDDIR)/Makefile | $(SYSROOT)/lib
 	  echo "Installing $$src -> $(SYSROOT)/lib/$$lib"; \
 	  install -D -m 644 "$$src" $(SYSROOT)/lib/$$lib; \
 	done
+
+# -----------------------------------------------------------------------
+# picolibc — built from the picolibc/ checkout via meson + ninja.
+#
+# Opt-in (PICOLIBC=1).  Builds a minimal embedded libc (tinystdio, no
+# semihost, no picocrt, single-thread, global errno, no TLS) into a
+# staging prefix, then overlays libc.a/libm.a + headers into the sysroot
+# and builds the picolibc retarget layer (tools/picortt: stdout-discard
+# console + sbrk).  See docs and tools/crt/cross-s1c33-none-piece.txt.
+#
+# The s1c33 machine port (setjmp/longjmp + ieeefp/setjmp endianness) lives
+# in the picolibc checkout under libc/machine/s1c33/.
+# -----------------------------------------------------------------------
+PICOLIBC_SRC      := $(TOPDIR)/picolibc
+PICOLIBC_BUILDDIR := $(BUILDDIR)/picolibc
+PICOLIBC_STAGE    := $(BUILDDIR)/picolibc-stage
+PICOLIBC_CROSS    := $(TOPDIR)/tools/crt/cross-s1c33-none-piece.txt
+LLVM_NM           := $(TOPDIR)/build/bin/llvm-nm
+LLVM_STRIP        := $(TOPDIR)/build/bin/llvm-strip
+LLVM_OBJCOPY      := $(TOPDIR)/build/bin/llvm-objcopy
+MESON := meson
+NINJA := ninja
+
+PICOLIBC_MESON_OPTS := \
+    --buildtype=minsize \
+    -Dincludedir=include -Dlibdir=lib \
+    -Dmultilib=false -Dtests=false \
+    -Dsemihost=false -Dfake-semihost=false \
+    -Dpicocrt=false -Dpicocrt-lib=false -Dpicolib=true \
+    -Dposix-console=false \
+    -Dthread-local-storage=false -Dnewlib-global-errno=true -Dsingle-thread=true \
+    -Denable-malloc=true \
+    -Dio-long-long=true -Dio-float-exact=false -Dio-c99-formats=true \
+    -Dformat-default=double -Dprintf-aliases=true \
+    -Dinitfini-array=true -Dinitfini=false
+
+# (a) Generate the meson cross file (absolute paths track $(TOPDIR)).
+#     Regenerated whenever this Makefile changes.
+$(PICOLIBC_CROSS): $(firstword $(MAKEFILE_LIST)) | $(BUILDDIR)
+	@echo "Generating $@"
+	@{ \
+	  echo '# GENERATED by tools/crt/Makefile (picolibc cross file). Do not edit.'; \
+	  echo '[binaries]'; \
+	  echo "c       = ['$(CLANG)', '--target=$(TARGET)', '-nostdlib']"; \
+	  echo "cpp     = ['$(CLANG)', '--target=$(TARGET)', '-nostdlib']"; \
+	  echo "ar      = '$(LLVM_AR)'"; \
+	  echo "nm      = '$(LLVM_NM)'"; \
+	  echo "strip   = '$(LLVM_STRIP)'"; \
+	  echo "ranlib  = '$(LLVM_RANLIB)'"; \
+	  echo "objcopy = '$(LLVM_OBJCOPY)'"; \
+	  echo ''; \
+	  echo '[host_machine]'; \
+	  echo "system     = 'none'"; \
+	  echo "cpu_family = 's1c33'"; \
+	  echo "cpu        = 's1c33'"; \
+	  echo "endian     = 'little'"; \
+	  echo ''; \
+	  echo '[properties]'; \
+	  echo 'skip_sanity_check = true'; \
+	  echo ''; \
+	  echo '[built-in options]'; \
+	  echo "c_args      = ['-ffreestanding', '-fno-builtin', '-Os', '-fno-common', '-Wno-int-conversion']"; \
+	  echo "c_link_args = ['-nostdlib']"; \
+	} > $@
+
+# (b) Configure picolibc with meson.  Depends on this Makefile so that
+#     changing PICOLIBC_MESON_OPTS forces a clean reconfigure.
+$(PICOLIBC_BUILDDIR)/build.ninja: $(PICOLIBC_CROSS) $(firstword $(MAKEFILE_LIST)) | $(BUILDDIR)
+	rm -rf $(PICOLIBC_BUILDDIR)
+	$(MESON) setup $(PICOLIBC_BUILDDIR) $(PICOLIBC_SRC) \
+	    --cross-file $(PICOLIBC_CROSS) \
+	    --prefix=$(PICOLIBC_STAGE) \
+	    $(PICOLIBC_MESON_OPTS)
+
+# (c) Build + staged install (libc.a/libm.a + headers into PICOLIBC_STAGE).
+$(PICOLIBC_STAGE)/lib/libc.a: $(PICOLIBC_BUILDDIR)/build.ninja
+	$(NINJA) -C $(PICOLIBC_BUILDDIR)
+	$(NINJA) -C $(PICOLIBC_BUILDDIR) install
+
+# (c2) Overlay libc.a/libm.a into the sysroot (PICOLIBC=1 only).
+picolibc-install: $(PICOLIBC_STAGE)/lib/libc.a | $(SYSROOT)/lib
+	install -D -m 644 $(PICOLIBC_STAGE)/lib/libc.a $(SYSROOT)/lib/libc.a
+	install -D -m 644 $(PICOLIBC_STAGE)/lib/libm.a $(SYSROOT)/lib/libm.a
+
+# (d) Overlay picolibc headers + P/ECE SDK/library headers into the sysroot.
+#     picolibc does not ship stdarg/stddef/float (clang's resource-dir
+#     provides them); we still rm them defensively to clear any newlib
+#     leftovers in an overlaid sysroot.  No newlib_config.h (no _reent).
+$(SYSROOT)/include/.picolibc-stamp: $(PICOLIBC_STAGE)/lib/libc.a $(LIBC_MODE_MARKER) \
+	$(addprefix $(LOCALINC)/,$(LOCAL_HEADER_NAMES)) \
+	$(addprefix $(SPRITEINC)/,$(SPRITE_HEADER_NAMES)) \
+	$(addprefix $(SIMPLEINC)/,$(SIMPLE_HEADER_NAMES))
+	@echo "Installing picolibc headers into sysroot..."
+	@mkdir -p $(SYSROOT)/include/machine $(SYSROOT)/include/sys
+	cp -r $(PICOLIBC_STAGE)/include/. $(SYSROOT)/include/
+	rm -f $(SYSROOT)/include/stdarg.h \
+	      $(SYSROOT)/include/stddef.h \
+	      $(SYSROOT)/include/float.h
+	install -D -m 644 -t $(SYSROOT)/include/ $(addprefix $(LOCALINC)/,$(LOCAL_HEADER_NAMES))
+	install -D -m 644 -t $(SYSROOT)/include/ $(addprefix $(SPRITEINC)/,$(SPRITE_HEADER_NAMES))
+	install -D -m 644 -t $(SYSROOT)/include/ $(addprefix $(SIMPLEINC)/,$(SIMPLE_HEADER_NAMES))
+	@touch $@
+	@echo "picolibc headers installed."
+
+# (e) Build + install the picolibc retarget layer (console + sbrk).
+#     Compiled against the staged picolibc headers (not the sysroot, which
+#     may still hold newlib headers mid-transition).
+picortt-install: $(SYSROOT)/include/.picolibc-stamp
+	$(MAKE) -C $(TOPDIR)/tools/picortt install PICOLIBC_INC=$(PICOLIBC_STAGE)/include

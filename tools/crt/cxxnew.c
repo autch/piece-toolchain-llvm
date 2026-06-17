@@ -28,26 +28,28 @@ void *_Znam(size_t size) {
     return _Znwm(size);
 }
 
-/* operator delete(void*) — _ZdlPv */
+/* operator delete(void*) — _ZdlPv
+ * Deleting a null pointer is a well-defined no-op in C++; guard against it so
+ * we do not make pceHeapFree() scan the whole heap only to report failure. */
 void _ZdlPv(void *ptr) {
-    pceHeapFree(ptr);
+    if (ptr) pceHeapFree(ptr);
 }
 
 /* operator delete[](void*) — _ZdaPv */
 void _ZdaPv(void *ptr) {
-    pceHeapFree(ptr);
+    if (ptr) pceHeapFree(ptr);
 }
 
 /* operator delete(void*, unsigned long) — _ZdlPvm (C++14 sized deallocation) */
 void _ZdlPvm(void *ptr, size_t size) {
     (void)size;
-    pceHeapFree(ptr);
+    if (ptr) pceHeapFree(ptr);
 }
 
 /* operator delete[](void*, unsigned long) — _ZdaPvm */
 void _ZdaPvm(void *ptr, size_t size) {
     (void)size;
-    pceHeapFree(ptr);
+    if (ptr) pceHeapFree(ptr);
 }
 
 /* nothrow variants — return NULL on failure instead of aborting */

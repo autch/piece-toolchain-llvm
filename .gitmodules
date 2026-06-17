@@ -7,3 +7,6 @@
 [submodule "piece-emu"]
 	path = piece-emu
 	url = https://github.com/autch/piece-emu.git
+[submodule "picolibc"]
+	path = picolibc
+	url = https://github.com/autch/picolibc-s1c33.git
