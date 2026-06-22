@@ -196,4 +196,4 @@ static const unsigned short sine_table[256] = { ... };
 
 - リンカスクリプト: `tools/piece.ld`
 - スタートアップ: `tools/crt/crt0.c` の `pceAppInit00`
-- インストール先: `sysroot/s1c33-none-elf/lib/{piece.ld,crt0.o}` (`make` で自動更新)
+- インストール先: `sysroot/s1c33-none-piece/lib/{piece.ld,crt0.o}` (`make` で自動更新)

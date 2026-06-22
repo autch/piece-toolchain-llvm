@@ -19,7 +19,7 @@ NINJA     := ninja -C $(BUILD_DIR)
 all: llvm sysroot
 
 llvm:
-	$(NINJA) clang llc lld llvm-objdump llvm-objcopy
+	$(NINJA) clang llc lld llvm-ar llvm-ranlib llvm-nm llvm-objdump llvm-objcopy
 
 sysroot:
 	$(MAKE) -C tools/crt all

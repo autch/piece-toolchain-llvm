@@ -24,7 +24,7 @@ llvm-c33/
 ├── picolibc/           picolibc サブモジュール（標準 C ライブラリ、既定）
 ├── newlib/             newlib サブモジュール（フォールバック; make NEWLIB=1）
 ├── sysroot/
-│   └── s1c33-none-elf/
+│   └── s1c33-none-piece/
 │       ├── include/    picolibc ヘッダ + P/ECE 固有ヘッダ
 │       └── lib/
 │           ├── piece.ld                      P/ECE リンカースクリプト
@@ -147,18 +147,18 @@ void pceAppExit(void)    { /* 終了時に1回呼ばれる */ }
 
 ```sh
 build/bin/clang \
-    --sysroot=sysroot/s1c33-none-elf \
+    --sysroot=sysroot/s1c33-none-piece \
     -O2 \
     -c hello.c -o hello.o
 ```
 
 | オプション | 説明 |
 |---|---|
-| `--sysroot=sysroot/s1c33-none-elf` | ヘッダとライブラリのルートを指定 |
+| `--sysroot=sysroot/s1c33-none-piece` | ヘッダとライブラリのルートを指定 |
 | `-O2` | 最適化レベル（`-O0` でデバッグ用） |
 | `-c` | オブジェクトファイル生成（リンクしない） |
 
-`--sysroot` を指定すると `sysroot/s1c33-none-elf/include` が自動的に
+`--sysroot` を指定すると `sysroot/s1c33-none-piece/include` が自動的に
 インクルードパスに加わるため、`-I sdk/include` は不要。
 
 #### HW 乗算器オプション
@@ -189,13 +189,13 @@ build/bin/clang --mcpu=s1c33209 ...
 ```sh
 # コンパイル時に -flto=full
 build/bin/clang \
-    --sysroot=sysroot/s1c33-none-elf \
+    --sysroot=sysroot/s1c33-none-piece \
     -O2 -flto=full \
     -c hello.c -o hello.o
 
 # リンク時にも同じオプションが必要
 build/bin/clang \
-    --sysroot=sysroot/s1c33-none-elf \
+    --sysroot=sysroot/s1c33-none-piece \
     -O2 -flto=full \
     hello.o -o hello.elf
 ```
@@ -217,7 +217,7 @@ picolibc は printf/scanf を機能別の複数バリアント（`double` / `flo
 
 ```sh
 # 整数のみで十分なアプリ（大幅に小さくなる）
-build/bin/clang --sysroot=sysroot/s1c33-none-elf -O2 \
+build/bin/clang --sysroot=sysroot/s1c33-none-piece -O2 \
     -mprintf=integer -mscanf=integer app.c -o app.elf
 ```
 
@@ -242,7 +242,7 @@ build/bin/clang --sysroot=sysroot/s1c33-none-elf -O2 \
 
 ```sh
 build/bin/clang \
-    --sysroot=sysroot/s1c33-none-elf \
+    --sysroot=sysroot/s1c33-none-piece \
     -O2 -S hello.c -o hello.s
 ```
 
@@ -250,7 +250,7 @@ build/bin/clang \
 
 ```sh
 build/bin/clang \
-    --sysroot=sysroot/s1c33-none-elf \
+    --sysroot=sysroot/s1c33-none-piece \
     -O2 -emit-llvm -S hello.c -o hello.ll
 ```
 
@@ -266,21 +266,21 @@ build/bin/clang \
 ```sh
 # コンパイル＋リンクを一括
 build/bin/clang \
-    --sysroot=sysroot/s1c33-none-elf \
+    --sysroot=sysroot/s1c33-none-piece \
     -O2 \
     hello.c -o hello.elf
 
 # .o をまとめてリンク
 build/bin/clang \
-    --sysroot=sysroot/s1c33-none-elf \
+    --sysroot=sysroot/s1c33-none-piece \
     hello.o sub.o -o hello.elf
 ```
 
 clang は自動的に以下を行う：
 - リンカーとして `ld.lld` を使用（`--fuse-ld=lld` 不要）
 - `-m elf32ls1c33` エミュレーション指定
-- `sysroot/s1c33-none-elf/lib/crt0.o` をスタートアップとして追加
-- `sysroot/s1c33-none-elf/lib/piece.ld` をデフォルトリンカースクリプトとして使用
+- `sysroot/s1c33-none-piece/lib/crt0.o` をスタートアップとして追加
+- `sysroot/s1c33-none-piece/lib/piece.ld` をデフォルトリンカースクリプトとして使用
 - `-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lpicortt -lpceshim -lc -lm --end-group` を自動リンク
 
 `-nostdlib` を指定するとスタートアップもライブラリも追加されない（手動リンク用）。
@@ -290,11 +290,11 @@ clang は自動的に以下を行う：
 ```sh
 build/bin/ld.lld \
     -m elf32ls1c33 \
-    -T sysroot/s1c33-none-elf/lib/piece.ld \
-    sysroot/s1c33-none-elf/lib/crt0.o \
-    sysroot/s1c33-none-elf/lib/crti.o \
+    -T sysroot/s1c33-none-piece/lib/piece.ld \
+    sysroot/s1c33-none-piece/lib/crt0.o \
+    sysroot/s1c33-none-piece/lib/crti.o \
     hello.o \
-    -Lsysroot/s1c33-none-elf/lib \
+    -Lsysroot/s1c33-none-piece/lib \
     -L build/lib/clang/22/lib/s1c33-unknown-none-elf \
     -lclang_rt.builtins-s1c33 \
     --start-group \
@@ -331,7 +331,7 @@ build/bin/llvm-readelf -s hello.elf | \
 
 # 逆アセンブル（--mcpu=s1c33209 で HW 乗算器命令も正しく表示）
 build/bin/llvm-objdump \
-    --triple=s1c33-none-elf --mcpu=s1c33209 \
+    --triple=s1c33-none-piece --mcpu=s1c33209 \
     -d hello.elf | head -80
 ```
 
@@ -395,7 +395,7 @@ hd hello.pex | head -2
 ```sh
 # コンパイル＋リンク＋.pex 生成（最小コマンド数）
 build/bin/clang \
-    --sysroot=sysroot/s1c33-none-elf \
+    --sysroot=sysroot/s1c33-none-piece \
     -O2 \
     hello.c -o hello.elf
 
@@ -405,12 +405,12 @@ tools/ppack/ppack -e hello.elf -ohello.pex -n"Hello World"
 複数ソースの場合（並列コンパイル後にリンク）：
 
 ```sh
-build/bin/clang --sysroot=sysroot/s1c33-none-elf \
+build/bin/clang --sysroot=sysroot/s1c33-none-piece \
     -O2 -c main.c -o main.o
-build/bin/clang --sysroot=sysroot/s1c33-none-elf \
+build/bin/clang --sysroot=sysroot/s1c33-none-piece \
     -O2 -c sub.c  -o sub.o
 
-build/bin/clang --sysroot=sysroot/s1c33-none-elf \
+build/bin/clang --sysroot=sysroot/s1c33-none-piece \
     main.o sub.o -o hello.elf
 
 tools/ppack/ppack -e hello.elf -ohello.pex -n"Hello World"
@@ -423,7 +423,7 @@ tools/ppack/ppack -e hello.elf -ohello.pex -n"Hello World"
 ### `undefined symbol: memset` 等
 
 sysroot が構築されていないか、`--sysroot` が指定されていない。
-§1 の手順で sysroot を構築してから `--sysroot=sysroot/s1c33-none-elf` を指定する。
+§1 の手順で sysroot を構築してから `--sysroot=sysroot/s1c33-none-piece` を指定する。
 
 ライブラリとシンボルの対応 (picolibc 移行後):
 
@@ -447,7 +447,7 @@ sysroot が構築されていないか、`--sysroot` が指定されていない
 
 アセンブル時に `--mcpu` が `s1c33`（基本コア）になっている。
 P/ECE 向けには `--mcpu=s1c33209`（デフォルト）のままにすること。
-`clang`（既定で `s1c33-none-elf` ターゲット）は自動的に `s1c33209` を使うため、
+`clang`（既定で `s1c33-none-piece` ターゲット）は自動的に `s1c33209` を使うため、
 通常はこのエラーは発生しない。`llvm-mc` や `clang -mcpu=s1c33` を
 明示した場合にのみ起こる。
 

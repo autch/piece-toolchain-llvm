@@ -63,7 +63,7 @@ cmake -G Ninja ../llvm/llvm \
   -DCMAKE_BUILD_TYPE=Debug \
   -DLLVM_TARGETS_TO_BUILD="" \
   -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="S1C33" \
-  -DLLVM_DEFAULT_TARGET_TRIPLE="s1c33-none-elf" \
+  -DLLVM_DEFAULT_TARGET_TRIPLE="s1c33-none-piece" \
   -DLLVM_ENABLE_PROJECTS="clang;lld;lldb" \
   -DLLVM_INSTALL_UTILS=ON \
   -DLLVM_USE_LINKER=mold \
@@ -92,6 +92,23 @@ build/bin/llvm-readelf
 > なるが、バックエンド開発中は `-gline-tables-only` や `assert()` が有効になる
 > ため推奨する。リリースビルドが必要な場合は `RelWithDebInfo` に変更する。
 
+### ビルド高速化・省メモリオプション（任意）
+
+開発ビルド（`Debug`）を速く・少ないメモリで通したい場合は、上記 cmake に以下を
+追加するとよい。リンク段はコンパイルとは別に大量の RAM を消費するため、
+`ninja -jN` の `N` を下げてもリンク時のメモリ不足は防げない点に注意。
+
+```sh
+  -DBUILD_SHARED_LIBS=ON \        # 共有ライブラリ化。リンク時 RAM/ディスクを大幅削減（開発ビルド向け）
+  -DLLVM_OPTIMIZED_TABLEGEN=ON \  # TableGen だけ最適化ビルド → Debug 全体が速くなる
+  -DLLVM_PARALLEL_LINK_JOBS=1 \   # 同時リンク数を制限。リンク段の OOM 対策
+  -DLLVM_BUILD_TESTS=OFF \        # テストターゲットを構成しない
+  -DLLVM_INCLUDE_TESTS=OFF        # 同上（ビルド対象削減）
+```
+
+> **`-DBUILD_SHARED_LIBS=ON` は開発ビルド専用。** 生成物が共有ライブラリ群に
+> 依存するため、配布用バイナリ（`release-build.sh` 等）には付けないこと。
+
 ---
 
 ## 3. ppack のビルド
@@ -113,7 +130,7 @@ cd ../..
 
 ## 4. sysroot の構築
 
-コンパイラが参照するヘッダとライブラリを `sysroot/s1c33-none-elf/` に配置する。
+コンパイラが参照するヘッダとライブラリを `sysroot/s1c33-none-piece/` に配置する。
 
 P/ECE 純正開発環境の `c:/usr/piece` 以下のうち、`include/` と `lib/` を `sdk/` ディレクトリ以下にコピーすること。標準 C ヘッダは picolibc サブモジュール（既定 libc）から自動的にインストールされる。
 
@@ -135,7 +152,7 @@ make -C tools/crt
 
 以下が自動的に実行される：
 
-1. picolibc を meson + ninja で `build/crt/picolibc`（staging prefix `build/crt/picolibc-stage`）にビルドし、標準 C ヘッダを `sysroot/s1c33-none-elf/include/` にインストール
+1. picolibc を meson + ninja で `build/crt/picolibc`（staging prefix `build/crt/picolibc-stage`）にビルドし、標準 C ヘッダを `sysroot/s1c33-none-piece/include/` にインストール
 2. `tools/crt/include/` から P/ECE 固有ヘッダ（`piece.h`、`draw.h`、`s1c33cpu.h` 等）をコピー (オリジナルは `sdk/include/` だが、ビルドからは参照しない reference material 化済み)
 3. `tools/sprite/pclsprite.h` と `tools/simple/{simple,thread}.h` をシンボリックな canonical 元としてコピー
 4. Clang 組み込みと競合するヘッダ（`stddef.h`、`stdarg.h`、`float.h`）を除去
@@ -151,15 +168,15 @@ make -C tools/crt
 
 | ファイル | 役割 |
 |---|---|
-| `sysroot/s1c33-none-elf/lib/crt0.o` | アプリヘッダ（`pceAppHead` @ 0x100000）、BSS ゼロクリア、コールバックラッパー |
-| `sysroot/s1c33-none-elf/lib/crti.o` | `pceAppNotify` デフォルト実装（弱シンボル・上書き可能） |
-| `sysroot/s1c33-none-elf/lib/libpceapi.a` | カーネル API スタブ + ユーティリティ |
-| `sysroot/s1c33-none-elf/lib/libclang_rt.builtins-s1c33.a` | compiler-rt（FP 演算・整数除算・i64 算術ランタイム） |
-| `sysroot/s1c33-none-elf/lib/libcxxrt.a` | C++ ランタイムスタブ（operator new/delete 等） |
-| `sysroot/s1c33-none-elf/lib/libpicortt.a` | picolibc リターゲット層（stdout 破棄コンソール + sbrk） |
-| `sysroot/s1c33-none-elf/lib/libc.a` | picolibc libc (printf / malloc / strtod / setjmp / 等) |
-| `sysroot/s1c33-none-elf/lib/libm.a` | picolibc libm（数学は libc.a に統合済み。本体は空スタブ） |
-| `sysroot/s1c33-none-elf/lib/piece.ld` | リンカスクリプト (P/ECE メモリマップ + ヒープ配置) |
+| `sysroot/s1c33-none-piece/lib/crt0.o` | アプリヘッダ（`pceAppHead` @ 0x100000）、BSS ゼロクリア、コールバックラッパー |
+| `sysroot/s1c33-none-piece/lib/crti.o` | `pceAppNotify` デフォルト実装（弱シンボル・上書き可能） |
+| `sysroot/s1c33-none-piece/lib/libpceapi.a` | カーネル API スタブ + ユーティリティ |
+| `sysroot/s1c33-none-piece/lib/libclang_rt.builtins-s1c33.a` | compiler-rt（FP 演算・整数除算・i64 算術ランタイム） |
+| `sysroot/s1c33-none-piece/lib/libcxxrt.a` | C++ ランタイムスタブ（operator new/delete 等） |
+| `sysroot/s1c33-none-piece/lib/libpicortt.a` | picolibc リターゲット層（stdout 破棄コンソール + sbrk） |
+| `sysroot/s1c33-none-piece/lib/libc.a` | picolibc libc (printf / malloc / strtod / setjmp / 等) |
+| `sysroot/s1c33-none-piece/lib/libm.a` | picolibc libm（数学は libc.a に統合済み。本体は空スタブ） |
+| `sysroot/s1c33-none-piece/lib/piece.ld` | リンカスクリプト (P/ECE メモリマップ + ヒープ配置) |
 
 > **picolibc 移行完了 (2026-06)**: 既知の EPSON SDK バグ (`sin`, `strtok`, `pow`, `strtod`, `ispunct`) を持つ `lib.lib` / `math.lib` 等は、まず newlib (Phase 2 Stage A/B) で置き換えられ、2026-06 に picolibc へ移行した。picolibc の tinystdio は `printf`/`sprintf` が malloc 非依存で、malloc 未使用アプリには sbrk もリンクされない。現在のリンク行は `-lclang_rt.builtins-s1c33 --start-group -lcxxrt -lpceapi -lpicortt -lpceshim -lc -lm --end-group`。`-mprintf=`/`-mscanf=` で printf/scanf バリアントをリンク時選択できる。詳細は `docs/build-howto.md` の「リンク順序」節を参照。
 
@@ -182,7 +199,7 @@ make -C tools/sprite
 ### sysroot 完成後の確認
 
 ```sh
-ls sysroot/s1c33-none-elf/lib/
+ls sysroot/s1c33-none-piece/lib/
 ```
 
 以下がすべて揃っていれば準備完了：

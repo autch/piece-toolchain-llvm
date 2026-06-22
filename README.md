@@ -181,6 +181,19 @@ cd app/hello && make
 `app/hello/hello_l.pex` が生成されれば成功です。
 If `app/hello/hello_l.pex` is produced, the toolchain is working.
 
+> **ビルドが遅い・メモリ不足で落ちる場合 / If the build is slow or runs out of memory:**
+> LLVM のリンク段はコンパイルとは別に大量の RAM を消費するため、`ninja -jN` の
+> `N` を下げてもリンク時のメモリ不足は防げません。手順 2 の cmake に
+> `-DBUILD_SHARED_LIBS=ON`（開発ビルド専用）、`-DLLVM_OPTIMIZED_TABLEGEN=ON`、
+> `-DLLVM_PARALLEL_LINK_JOBS=1` を加えると大幅に改善します。詳細は
+> [`docs/setup.md`](docs/setup.md) の「ビルド高速化・省メモリオプション」を参照。
+>
+> The LLVM link step consumes a lot of RAM independently of compilation, so
+> lowering `ninja -jN` will not prevent link-time memory exhaustion. Adding
+> `-DBUILD_SHARED_LIBS=ON` (dev builds only), `-DLLVM_OPTIMIZED_TABLEGEN=ON`,
+> and `-DLLVM_PARALLEL_LINK_JOBS=1` to the step-2 cmake helps significantly.
+> See "ビルド高速化・省メモリオプション" in [`docs/setup.md`](docs/setup.md).
+
 ---
 
 ## アプリケーションのビルド / Building Your Application
