@@ -12,6 +12,9 @@
 #   clean    -- clean build artefacts and sysroot
 
 BUILD_DIR := build
+# Directory holding the built LLVM tools. Override for build layouts that
+# place binaries elsewhere, e.g. MSVC puts them under build/Release/bin.
+BIN       ?= $(BUILD_DIR)/bin
 NINJA     := ninja -C $(BUILD_DIR)
 
 .PHONY: all llvm sysroot tests clean
@@ -26,7 +29,7 @@ sysroot:
 
 tests:
 	$(NINJA) check-llvm-codegen-s1c33 check-llvm-mc-s1c33 check-clang-codegen-s1c33
-	$(BUILD_DIR)/bin/llvm-lit -sv \
+	$(BIN)/llvm-lit -sv \
 		llvm/clang/test/Driver/s1c33-toolchain.c \
 		llvm/clang/test/Driver/s1c33-cxx-defaults.cpp \
 		llvm/clang/test/Sema/s1c33-interrupt-handler-attr.c \

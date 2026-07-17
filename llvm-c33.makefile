@@ -1,7 +1,7 @@
 
 C33HOME = $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 SDK = $(C33HOME)/sdk
-BIN = $(C33HOME)/build/bin
+BIN ?= $(C33HOME)/build/bin
 SYSROOT = $(C33HOME)/sysroot/s1c33-none-piece
 
 ifdef LTO

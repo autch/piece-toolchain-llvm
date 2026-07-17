@@ -34,9 +34,13 @@ TOPDIR  := $(realpath ../..)
 BUILDDIR := $(TOPDIR)/build/crt
 SYSROOT  := $(TOPDIR)/sysroot/s1c33-none-piece
 
-CLANG   := $(TOPDIR)/build/bin/clang
-LLVM_AR := $(TOPDIR)/build/bin/llvm-ar
-LLVM_OBJDUMP := $(TOPDIR)/build/bin/llvm-objdump
+# Directory holding the built LLVM tools. Override for build layouts that
+# place binaries elsewhere, e.g. MSVC puts them under build/Release/bin.
+BIN     ?= $(TOPDIR)/build/bin
+
+CLANG   := $(BIN)/clang
+LLVM_AR := $(BIN)/llvm-ar
+LLVM_OBJDUMP := $(BIN)/llvm-objdump
 PYTHON  := python3
 SRF2ELF := $(PYTHON) $(TOPDIR)/tools/srf2elf/srf2elf.py
 OBJDUMP2ASM := $(PYTHON) $(TOPDIR)/tools/objdump2asm/objdump2asm.py
@@ -59,7 +63,7 @@ NEWLIB_INCLUDE := $(TOPDIR)/newlib/newlib/libc/include
 # newlib build sources/outputs
 NEWLIB_SRC      := $(TOPDIR)/newlib/newlib
 NEWLIB_BUILDDIR := $(BUILDDIR)/newlib
-LLVM_RANLIB     := $(TOPDIR)/build/bin/llvm-ranlib
+LLVM_RANLIB     := $(BIN)/llvm-ranlib
 
 # compiler-rt builtins source
 BUILTINS_SRC  := $(TOPDIR)/llvm/compiler-rt/lib/builtins
@@ -539,9 +543,9 @@ PICOLIBC_SRC      := $(TOPDIR)/picolibc
 PICOLIBC_BUILDDIR := $(BUILDDIR)/picolibc
 PICOLIBC_STAGE    := $(BUILDDIR)/picolibc-stage
 PICOLIBC_CROSS    := $(TOPDIR)/tools/crt/cross-s1c33-none-piece.txt
-LLVM_NM           := $(TOPDIR)/build/bin/llvm-nm
-LLVM_STRIP        := $(TOPDIR)/build/bin/llvm-strip
-LLVM_OBJCOPY      := $(TOPDIR)/build/bin/llvm-objcopy
+LLVM_NM           := $(BIN)/llvm-nm
+LLVM_STRIP        := $(BIN)/llvm-strip
+LLVM_OBJCOPY      := $(BIN)/llvm-objcopy
 MESON := meson
 NINJA := ninja
 
