@@ -24,7 +24,7 @@ libmuslib.a : $(LIBOBJS) $(INSTOBJS)
 musfast.o: musfast_llvm.s
 	$(AS) $(ASFLAGS) -c -o $@ $<
 musfast_llvm.s: musfast.s
-	python $(C33HOME)/tools/asm33conv/asm33conv.py $< -o $@
+	$(PYTHON) $(C33HOME)/tools/asm33conv/asm33conv.py $< -o $@
 
 clean:
 	rm -f *.o libmuslib.a wave/*.o

@@ -21,3 +21,7 @@ LDFLAGS = $(LTOFLAGS)
 PPACK = $(C33HOME)/tools/ppack/ppack
 
 AR = $(BIN)/llvm-ar
+
+# Python 3 interpreter. Override where the command is named differently,
+# e.g. `make PYTHON=python`.
+PYTHON ?= python3

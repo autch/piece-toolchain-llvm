@@ -1,6 +1,6 @@
 include ../../llvm-c33.makefile
 
-ASM33CONV = $(C33HOME)/tools/asm33conv/asm33conv.py 
+ASM33CONV = $(PYTHON) $(C33HOME)/tools/asm33conv/asm33conv.py
 
 CFLAGS := -O2 $(CFLAGS)
 

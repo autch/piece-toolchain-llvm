@@ -41,7 +41,9 @@ BIN     ?= $(TOPDIR)/build/bin
 CLANG   := $(BIN)/clang
 LLVM_AR := $(BIN)/llvm-ar
 LLVM_OBJDUMP := $(BIN)/llvm-objdump
-PYTHON  := python3
+# Python 3 interpreter. Override where the command is named differently,
+# e.g. `make PYTHON=python`.
+PYTHON  ?= python3
 SRF2ELF := $(PYTHON) $(TOPDIR)/tools/srf2elf/srf2elf.py
 OBJDUMP2ASM := $(PYTHON) $(TOPDIR)/tools/objdump2asm/objdump2asm.py
 SDKLIB  := $(TOPDIR)/sdk/lib
@@ -253,8 +255,12 @@ $(SYSROOT)/include/.newlib-stamp: $(NEWLIB_INCLUDE) $(LIBC_MODE_MARKER) \
 	| $(BUILDDIR)
 	@echo "Installing newlib headers into sysroot..."
 	@mkdir -p $(SYSROOT)/include/machine $(SYSROOT)/include/sys
-	@# Copy all newlib standard C headers
-	cp -r $(NEWLIB_INCLUDE)/. $(SYSROOT)/include/
+	@# Copy all newlib standard C headers.  Use `cp -rT SRC DST` (merge SRC's
+	@# contents into DST) rather than the `cp -r SRC/. DST/` idiom: on Windows
+	@# (MSYS2) the trailing `/.` is normalised away before cp sees it, turning
+	@# the command into `cp -r SRC DST/` which nests the tree one level deep
+	@# (DST/include/...).  `-T` never treats DST as a container, so it is safe.
+	cp -rT $(NEWLIB_INCLUDE) $(SYSROOT)/include
 	@# Remove headers that Clang provides via resource-dir (not newlib's job):
 	@#   stdarg.h  — clang's __stdarg_*.h mechanism
 	@#   stddef.h  — gcc33 SDK relic: defines wchar_t as 16-bit unsigned short,
@@ -412,7 +418,7 @@ UTILITY_OBJS := \
 # Each function lands in a separate object file so the linker only pulls in
 # the stubs that are actually referenced (no unused API symbols).
 $(SYSROOT)/lib/libpceapi.a: gen_pceapi.py vector.h $(UTILITY_OBJS) | $(PCEAPI_STUBS_DIR) $(SYSROOT)/lib
-	python3 gen_pceapi.py vector.h --split-dir $(PCEAPI_STUBS_DIR)
+	$(PYTHON) gen_pceapi.py vector.h --split-dir $(PCEAPI_STUBS_DIR)
 	for s in $(PCEAPI_STUBS_DIR)/pce*.s; do \
 		$(CLANG) $(ASFLAGS_CRT) $$s -o $${s%.s}.o || exit 1; \
 	done
@@ -620,7 +626,12 @@ $(SYSROOT)/include/.picolibc-stamp: $(PICOLIBC_STAGE)/lib/libc.a $(LIBC_MODE_MAR
 	$(addprefix $(SIMPLEINC)/,$(SIMPLE_HEADER_NAMES))
 	@echo "Installing picolibc headers into sysroot..."
 	@mkdir -p $(SYSROOT)/include/machine $(SYSROOT)/include/sys
-	cp -r $(PICOLIBC_STAGE)/include/. $(SYSROOT)/include/
+	@# `cp -rT SRC DST` merges SRC's contents into DST.  The older
+	@# `cp -r SRC/. DST/` idiom breaks on Windows (MSYS2), where the trailing
+	@# `/.` is stripped during path normalisation, so cp copies the whole
+	@# `include` directory into DST and headers end up at DST/include/... one
+	@# level too deep.  `-T` treats DST as the target, never as a container.
+	cp -rT $(PICOLIBC_STAGE)/include $(SYSROOT)/include
 	rm -f $(SYSROOT)/include/stdarg.h \
 	      $(SYSROOT)/include/stddef.h \
 	      $(SYSROOT)/include/float.h
